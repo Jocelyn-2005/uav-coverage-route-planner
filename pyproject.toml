@@ -44,3 +44,8 @@ line-length = 100
 [tool.mypy]
 python_version = "3.12"
 strict = true
+
+[dependency-groups]
+dev = [
+    "types-shapely>=2.1.0.20260728",
+]
