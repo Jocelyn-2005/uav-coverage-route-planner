@@ -1,0 +1,18 @@
+flight_altitude_m: 25.0
+ground_elevation_m: 0.0
+start: [153.4, 67.2, 25.0]
+horizontal_clearance_m: 3.0
+vertical_clearance_m: 2.0
+allow_overflight_above_buildings: true
+scan_direction_deg: 90.0
+scan_pattern: auto
+minimum_coverage_ratio: 0.95
+camera:
+  image_width_px: 1920
+  image_height_px: 1080
+  horizontal_fov_deg: 60.0
+  vertical_fov_deg: 45.0
+  pitch_deg: -90.0
+  yaw_mode: follow_path
+  forward_overlap: 0.30
+  side_overlap: 0.30

@@ -47,5 +47,11 @@ strict = true
 
 [dependency-groups]
 dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "types-networkx>=3.6.1.20260317",
+    "types-PyYAML>=6.0.12.20250915",
     "types-shapely>=2.1.0.20260728",
 ]

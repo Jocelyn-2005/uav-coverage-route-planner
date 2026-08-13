@@ -1,9 +1,16 @@
 from pathlib import Path
 
 import pytest
+from shapely import unary_union
 
 from coverage_planner.geometry.calibration import MapCalibration
-from coverage_planner.io.semantic_map import load_semantic_map, search_area_geometry
+from coverage_planner.geometry.search_area import build_effective_search_area
+from coverage_planner.io.geojson import load_polygonal_geojson
+from coverage_planner.io.semantic_map import (
+    load_semantic_map,
+    rectangle_geometry,
+    search_area_geometry,
+)
 from coverage_planner.visualization import render_semantic_map
 from coverage_planner.visualization.semantic_map import semantic_map_display_bounds
 
@@ -18,6 +25,22 @@ def test_loads_real_yungu_semantic_map() -> None:
     assert search_area_geometry(semantic_map).bounds == (
         -4.835386753082275, -10.610369682312012, 324.72998046875, 210.56312561035156,
     )
+
+
+def test_builds_real_yungu_outdoor_search_area() -> None:
+    semantic_map = load_semantic_map(EXAMPLE)
+    requested = load_polygonal_geojson(EXAMPLE.parent / "search_area.geojson")
+    result = build_effective_search_area(semantic_map, requested)
+    expected_building_area = unary_union([
+        rectangle_geometry(node.shape) for node in semantic_map.building_nodes
+    ]).intersection(requested).area
+    assert result.metrics.requested_area_m2 == pytest.approx(requested.area)
+    assert result.metrics.outside_map_area_m2 == pytest.approx(0)
+    assert result.metrics.building_excluded_area_m2 == pytest.approx(expected_building_area)
+    assert result.metrics.effective_search_area_m2 == pytest.approx(
+        requested.area - expected_building_area
+    )
+    assert result.geometry.intersection(result.building_exclusion_geometry).area == pytest.approx(0)
 
 
 def test_renders_real_yungu_map(tmp_path: Path) -> None:
