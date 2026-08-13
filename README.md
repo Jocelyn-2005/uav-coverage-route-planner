@@ -86,8 +86,6 @@ results/example_run/visualization.png
 |---|---|---|
 | `flight_plan.json` | 下层飞控适配器，首选 | 连续摄影飞行协议 v2 |
 | `flight_plan.yaml` | 人工审阅/飞控适配器 | 与 JSON 等价的 YAML |
-| `waypoints.json` | 旧系统兼容 | 旧版规划关键点和相机 footprint |
-| `waypoints.csv` | 表格检查 | 旧版航点表 |
 | `coverage_report.json` | 验收与实验统计 | 覆盖率、航程、非作业距离、不可达网格 |
 | `patches.geojson` | GIS/覆盖分析 | 每个地面网格的覆盖状态 |
 | `route.geojson` | GIS/地图显示 | 任务路线折线 |
@@ -95,7 +93,7 @@ results/example_run/visualization.png
 
 ### 给下层飞控的文件
 
-下层飞控应优先读取 `flight_plan.json`，而不是旧版 `waypoints.json`。协议包含：
+下层飞控读取 `flight_plan.json`。协议包含：
 
 - `waypoints`：均匀细分后的 ENU 飞控途径点，带高度、航向和目标速度；
 - `route_segments`：相邻途径点之间的直线航段；

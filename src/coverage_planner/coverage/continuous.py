@@ -227,7 +227,7 @@ def _group_lanes(segments: list[RouteSegment]) -> tuple[CoverageLane, ...]:
 
 
 def _compact_route(route: tuple[Waypoint, ...]) -> tuple[Waypoint, ...]:
-    """Remove legacy image-sampling points while preserving turns and route semantics."""
+    """Reduce dense coverage samples while preserving turns and route semantics."""
     if len(route) < 3:
         return route
     compacted = [route[0]]

@@ -42,8 +42,7 @@ from coverage_planner.routing import (
 class StrategyMetrics:
     pattern: str
     coverage_ratio: float
-    capture_waypoint_count: int
-    transit_waypoint_count: int
+    planning_point_count: int
     path_length_m: float
     unreachable_patch_count: int
 
@@ -52,8 +51,8 @@ class StrategyMetrics:
 class PatternCandidate:
     pattern: str
     capture_plan: CapturePlan
-    waypoints: tuple[Waypoint, ...]
-    skipped_waypoint_ids: tuple[str, ...]
+    planning_route: tuple[Waypoint, ...]
+    skipped_point_ids: tuple[str, ...]
     metrics: StrategyMetrics
 
 
@@ -62,18 +61,18 @@ class PlanResult:
     semantic_map: SemanticMap
     effective_area: EffectiveSearchArea
     patches: tuple[Patch, ...]
-    waypoints: tuple[Waypoint, ...]
+    planning_route: tuple[Waypoint, ...]
     obstacles: FlightObstacles
     scan_direction_deg: float
     unreachable_patch_ids: tuple[str, ...]
     warnings: tuple[str, ...]
+    continuous_flight: ContinuousFlightPlan
     scan_pattern: str = "lawn_mower"
     strategy_comparison: tuple[StrategyMetrics, ...] = ()
-    continuous_flight: ContinuousFlightPlan | None = None
 
     @property
     def path_length_m(self) -> float:
-        return sum(hypot(b.x-a.x, b.y-a.y) for a, b in pairwise(self.waypoints))
+        return sum(hypot(b.x-a.x, b.y-a.y) for a, b in pairwise(self.planning_route))
 
 
 class CoveragePlanner:
@@ -119,10 +118,10 @@ class CoveragePlanner:
             item.metrics.unreachable_patch_count, item.metrics.path_length_m,
             -item.metrics.coverage_ratio, item.pattern))
         capture_plan = chosen.capture_plan
-        waypoints = chosen.waypoints
-        skipped_waypoint_ids = chosen.skipped_waypoint_ids
+        planning_route = chosen.planning_route
+        skipped_point_ids = chosen.skipped_point_ids
         continuous_flight, continuous_footprints = build_continuous_flight_plan(
-            waypoints, camera=camera, flight_altitude_m=flight_altitude_m,
+            planning_route, camera=camera, flight_altitude_m=flight_altitude_m,
             ground_elevation_m=ground_elevation_m,
             capture_frequency_hz=capture_frequency_hz,
             control_point_spacing_m=control_point_spacing_m,
@@ -133,13 +132,13 @@ class CoveragePlanner:
         evaluated = evaluate_patch_coverage(
             patches, continuous_footprints, minimum_coverage_ratio=minimum_coverage_ratio
         )
-        warnings = ([f"{len(skipped_waypoint_ids)} capture waypoints are unreachable at the fixed altitude"]
-                    if skipped_waypoint_ids else [])
+        warnings = ([f"{len(skipped_point_ids)} coverage points are unreachable at the fixed altitude"]
+                    if skipped_point_ids else [])
         unreachable = tuple(p.id for p in evaluated if not p.covered)
         comparison = tuple(item.metrics for item in sorted(candidates, key=lambda item: item.pattern))
-        return PlanResult(semantic_map, effective, evaluated, waypoints, obstacles,
+        return PlanResult(semantic_map, effective, evaluated, planning_route, obstacles,
                           capture_plan.scan_direction_deg, unreachable, tuple(warnings),
-                          chosen.pattern, comparison, continuous_flight)
+                          continuous_flight, chosen.pattern, comparison)
 
     def _run_pattern(
         self, *, pattern: str, effective_geometry: Polygonal, patches: tuple[Patch, ...],
@@ -171,7 +170,7 @@ class CoveragePlanner:
         start_wp = Waypoint("wp_start", 0, "transit", *start, 0, -90, False)
         route_points, pre_skipped = prepare_lane_route(
             capture_plan, start_enu_m=(start[0], start[1]), obstacles=obstacle_geometry)
-        waypoints, skipped = route_reachable_waypoints(
+        planning_route, skipped = route_reachable_waypoints(
             start_wp, route_points, obstacle_geometry,
             return_to_start=return_to_start)
         skipped = (*pre_skipped, *skipped)
@@ -186,9 +185,9 @@ class CoveragePlanner:
         covered_area = sum(p.area_m2 * p.coverage_ratio for p in evaluated)
         metrics = StrategyMetrics(
             pattern=pattern, coverage_ratio=covered_area / effective_area if effective_area else 0,
-            capture_waypoint_count=sum(w.capture for w in waypoints),
-            transit_waypoint_count=sum(not w.capture for w in waypoints),
-            path_length_m=sum(hypot(b.x-a.x, b.y-a.y) for a, b in pairwise(waypoints)),
+            planning_point_count=len(planning_route),
+            path_length_m=sum(hypot(b.x-a.x, b.y-a.y)
+                              for a, b in pairwise(planning_route)),
             unreachable_patch_count=sum(not p.covered for p in evaluated),
         )
-        return PatternCandidate(pattern, capture_plan, waypoints, skipped, metrics)
+        return PatternCandidate(pattern, capture_plan, planning_route, skipped, metrics)

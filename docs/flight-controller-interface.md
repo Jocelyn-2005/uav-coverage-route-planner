@@ -2,7 +2,7 @@
 
 ## 1. 交付文件
 
-下层飞控适配器应读取规划输出目录中的 `flight_plan.json`。`flight_plan.yaml` 内容等价，适合人工审阅；`waypoints.json` 是兼容旧系统的文件，不应作为新飞控接口的首选。
+下层飞控适配器应读取规划输出目录中的 `flight_plan.json`。`flight_plan.yaml` 内容等价，适合人工审阅。
 
 协议当前版本为 `schema_version = "2.0"`，坐标系为 ENU，单位为米。
 
@@ -138,4 +138,3 @@ capture_enabled ? 开启固定频率触发 : 停止触发
 - `route.geojson`：GIS 显示；
 - `patches.geojson`：覆盖缺口分析；
 - `visualization.png`：人工快速检查；
-- `waypoints.json/csv`：旧接口兼容和表格检查。

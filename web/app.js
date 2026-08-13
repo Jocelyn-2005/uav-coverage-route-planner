@@ -17,8 +17,6 @@ const strategyNames = {
 const exportNames = {
   'flight_plan.json': '连续飞行计划（JSON）',
   'flight_plan.yaml': '连续飞行计划（YAML）',
-  'waypoints.json': '兼容航点（JSON）',
-  'waypoints.csv': '兼容航点（CSV）',
   'patches.geojson': '覆盖网格（GeoJSON）',
   'route.geojson': '飞行路线（GeoJSON）',
   'coverage_report.json': '覆盖报告（JSON）',
@@ -73,7 +71,7 @@ function draw() {
     rings(patch.geometry).forEach(ring => svg.append(element('polygon', {
       points: polygonPoints(ring),
     }, `patch ${patch.covered ? '' : 'uncovered'}`))));
-  const flightRoute = planData ? (planData.flight_waypoints.length ? planData.flight_waypoints : planData.waypoints) : [];
+  const flightRoute = planData ? planData.flight_waypoints : [];
   if (planData && layer('route')) svg.append(element('polyline', {
     points: flightRoute.map(waypoint => `${waypoint.x},${-waypoint.y}`).join(' '),
   }, 'route'));
@@ -220,7 +218,7 @@ planButton.onclick = async () => {
     const result = body.summary;
     const comparison = result.strategy_comparison.map(item => `${strategyNames[item.pattern] ?? item.pattern}：覆盖率 ${(item.coverage_ratio * 100).toFixed(2)}%，航程 ${item.path_length_m.toFixed(0)} 米`).join('<br>');
     summaryBox.innerHTML = `<h2>规划结果</h2><p>采用策略：${strategyNames[result.scan_pattern] ?? result.scan_pattern}<br>覆盖率：${(result.coverage_ratio * 100).toFixed(2)}%<br>总航程：${result.path_length_m.toFixed(0)} 米<br>覆盖航线：${result.lane_count} 条<br>飞行控制点：${result.flight_waypoint_count} 个<br>预计采图：${result.sampled_image_count} 张<br>未覆盖网格：${result.unreachable.length} 个</p><p><strong>策略比较</strong><br>${comparison}</p>`;
-    exportBox.innerHTML = ['flight_plan.json','flight_plan.yaml','waypoints.json','waypoints.csv','patches.geojson','route.geojson','coverage_report.json','visualization.png'].map(file => `<a href="/api/export/${file}">${exportNames[file]}</a>`).join('');
+    exportBox.innerHTML = ['flight_plan.json','flight_plan.yaml','patches.geojson','route.geojson','coverage_report.json','visualization.png'].map(file => `<a href="/api/export/${file}">${exportNames[file]}</a>`).join('');
     draw();
     replayButton.disabled = false;
     replayMission();

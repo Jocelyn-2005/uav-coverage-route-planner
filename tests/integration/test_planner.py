@@ -25,21 +25,14 @@ def test_planner_exports_all_required_artifacts(tmp_path: Path) -> None:
       camera=camera(),flight_altitude_m=10,start=(0,0,10),horizontal_clearance_m=1,
       vertical_clearance_m=2,scan_direction_deg=90)
     export_plan(result,tmp_path)
-    expected={"waypoints.json","waypoints.csv","patches.geojson","route.geojson",
-              "coverage_report.json","visualization.png","flight_plan.json","flight_plan.yaml"}
+    expected={"patches.geojson","route.geojson","coverage_report.json",
+              "visualization.png","flight_plan.json","flight_plan.yaml"}
     assert {path.name for path in tmp_path.iterdir()} == expected
-    mission=json.loads((tmp_path/"waypoints.json").read_text())
-    assert mission["coordinate_frame"]=="ENU"
-    assert mission["schema_version"]=="1.0"
-    assert mission["waypoints"]
-    assert all({"x","y","z","yaw_deg","capture"} <= waypoint.keys() for waypoint in mission["waypoints"])
-    capture = next(waypoint for waypoint in mission["waypoints"] if waypoint["capture"])
-    assert capture["camera_footprint_enu"]["type"] == "Polygon"
     assert (tmp_path/"visualization.png").stat().st_size>10_000
-    assert (result.waypoints[0].x, result.waypoints[0].y) == (
-        result.waypoints[-1].x, result.waypoints[-1].y
+    assert (result.planning_route[0].x, result.planning_route[0].y) == (
+        result.planning_route[-1].x, result.planning_route[-1].y
     )
-    assert not result.waypoints[-1].capture
+    assert not result.planning_route[-1].capture
     flight=json.loads((tmp_path/"flight_plan.json").read_text())
     assert flight["schema_version"] == "2.0"
     assert flight["capture"]["mode"] == "continuous"
@@ -62,12 +55,11 @@ def test_auto_compares_both_scan_patterns_and_returns_home() -> None:
     assert {item.pattern for item in result.strategy_comparison} == {
         "lawn_mower", "contour_outward"}
     assert result.scan_pattern in {"lawn_mower", "contour_outward"}
-    assert (result.waypoints[0].x, result.waypoints[0].y) == (20, 15)
-    assert (result.waypoints[-1].x, result.waypoints[-1].y) == (20, 15)
+    assert (result.planning_route[0].x, result.planning_route[0].y) == (20, 15)
+    assert (result.planning_route[-1].x, result.planning_route[-1].y) == (20, 15)
     best_coverage = max(item.coverage_ratio for item in result.strategy_comparison)
     assert next(item for item in result.strategy_comparison
                 if item.pattern == result.scan_pattern).coverage_ratio >= best_coverage - 0.01
-    assert result.continuous_flight is not None
     points = {waypoint.id: waypoint for waypoint in result.continuous_flight.waypoints}
     for segment in result.continuous_flight.route_segments:
         start, end = points[segment.start_waypoint_id], points[segment.end_waypoint_id]
@@ -85,7 +77,6 @@ def test_low_altitude_coverage_uses_only_reachable_captures() -> None:
     result = CoveragePlanner().plan(semantic_map=map_with_building,search_geometry=box(0,0,30,20),
       camera=camera(),flight_altitude_m=10,start=(0,0,10),horizontal_clearance_m=3,
       vertical_clearance_m=2,scan_direction_deg=90)
-    assert result.continuous_flight is not None
     assert all(
         contributor.startswith("segment_")
         for patch in result.patches for contributor in patch.covered_by_waypoint_ids)

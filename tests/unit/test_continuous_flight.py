@@ -43,7 +43,7 @@ def test_heading_follows_flight_direction_and_connector_speed() -> None:
     assert plan.route_segments[0].speed_mps == 4
 
 
-def test_legacy_samples_are_replaced_by_uniform_control_points() -> None:
+def test_dense_samples_are_replaced_by_uniform_control_points() -> None:
     route = tuple(Waypoint(
         str(index), index, "capture", 0, y, 25, 0, -90, True, 0, 0)
         for index, y in enumerate((0, 5, 10, 15, 20), 1))

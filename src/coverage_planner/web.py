@@ -97,20 +97,15 @@ def plan(request: PlanRequest) -> dict[str, Any]:
         export_plan(result, RESULTS)
         return {"summary": {
             "coverage_ratio": sum(p.area_m2*p.coverage_ratio for p in result.patches)/result.effective_area.geometry.area,
-            "capture_count": sum(w.capture for w in result.waypoints),
-            "transit_count": sum(not w.capture for w in result.waypoints),
             "unreachable": list(result.unreachable_patch_ids),
             "scan_pattern": result.scan_pattern,
             "path_length_m": result.path_length_m,
-            "lane_count": len(result.continuous_flight.lanes) if result.continuous_flight else 0,
-            "flight_waypoint_count": len(result.continuous_flight.waypoints)
-                if result.continuous_flight else 0,
-            "sampled_image_count": result.continuous_flight.sampled_footprint_count
-                if result.continuous_flight else 0,
+            "lane_count": len(result.continuous_flight.lanes),
+            "flight_waypoint_count": len(result.continuous_flight.waypoints),
+            "sampled_image_count": result.continuous_flight.sampled_footprint_count,
             "strategy_comparison": [{
                 "pattern": item.pattern, "coverage_ratio": item.coverage_ratio,
-                "capture_count": item.capture_waypoint_count,
-                "transit_count": item.transit_waypoint_count,
+                "planning_point_count": item.planning_point_count,
                 "path_length_m": item.path_length_m,
                 "unreachable_count": item.unreachable_patch_count,
             } for item in result.strategy_comparison]},
@@ -118,22 +113,17 @@ def plan(request: PlanRequest) -> dict[str, Any]:
             "effective_area": mapping(result.effective_area.geometry),
             "obstacles": mapping(result.obstacles.geometry),
             "patches": [{"id":p.id,"geometry":mapping(p.geometry),"covered":p.covered,"ratio":p.coverage_ratio} for p in result.patches],
-            "waypoints": [{"id":w.id,"x":w.x,"y":w.y,"z":w.z,"kind":w.kind,"capture":w.capture,
-                "yaw_deg":w.yaw_deg,"covered_patch_ids":list(w.covered_patch_ids),
-                "camera_footprint_enu":mapping(w.camera_footprint_enu) if w.camera_footprint_enu else None}
-                for w in result.waypoints],
             "flight_waypoints": [{
                 "id": w.id, "x": w.x, "y": w.y, "z": w.z,
                 "heading_deg": w.heading_deg, "speed_mps": w.speed_mps,
-            } for w in result.continuous_flight.waypoints] if result.continuous_flight else [],
+            } for w in result.continuous_flight.waypoints],
             "route_segments": [{
                 "id": segment.id, "kind": segment.kind,
                 "start_waypoint_id": segment.start_waypoint_id,
                 "end_waypoint_id": segment.end_waypoint_id,
                 "heading_deg": segment.heading_deg, "speed_mps": segment.speed_mps,
                 "capture_enabled": segment.capture_enabled,
-            } for segment in result.continuous_flight.route_segments]
-                if result.continuous_flight else [],
+            } for segment in result.continuous_flight.route_segments],
         }
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -141,7 +131,7 @@ def plan(request: PlanRequest) -> dict[str, Any]:
 
 @app.get("/api/export/{filename}")
 def download(filename: str) -> FileResponse:
-    allowed={"waypoints.json","waypoints.csv","flight_plan.json","flight_plan.yaml",
+    allowed={"flight_plan.json","flight_plan.yaml",
              "patches.geojson","route.geojson","coverage_report.json","visualization.png"}
     if filename not in allowed or not (RESULTS/filename).is_file():
         raise HTTPException(status_code=404, detail="export not found")

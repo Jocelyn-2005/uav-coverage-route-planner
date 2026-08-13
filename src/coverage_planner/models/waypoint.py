@@ -23,7 +23,6 @@ class Waypoint:
     capture: bool
     scan_line_index: int | None = None
     scan_segment_index: int | None = None
-    covered_patch_ids: tuple[str, ...] = ()
     camera_footprint_enu: Polygon | None = None
 
 

@@ -54,34 +54,6 @@ class VisibilityRouter:
         return tuple(graph.nodes[index]["point"] for index in indices)
 
 
-def route_waypoints(
-    capture_waypoints: tuple[Waypoint, ...], obstacles: Polygonal,
-) -> tuple[Waypoint, ...]:
-    if not capture_waypoints:
-        return ()
-    routed = [capture_waypoints[0]]
-    for destination in capture_waypoints[1:]:
-        points = shortest_collision_free_path(
-            (routed[-1].x, routed[-1].y), (destination.x, destination.y), obstacles
-        )
-        for point in points[1:-1]:
-            routed.append(Waypoint(
-                id="", sequence=0, kind="transit", x=point[0], y=point[1], z=destination.z,
-                yaw_deg=0.0, camera_pitch_deg=destination.camera_pitch_deg, capture=False,
-            ))
-        routed.append(destination)
-    result = []
-    for index, waypoint in enumerate(routed, 1):
-        next_point = routed[index] if index < len(routed) else waypoint
-        yaw = _yaw((waypoint.x, waypoint.y), (next_point.x, next_point.y))
-        identifier = (
-            waypoint.id if waypoint.capture or waypoint.id == "wp_home_return"
-            else f"wp_{index:04d}_transit"
-        )
-        result.append(replace(waypoint, id=identifier, sequence=index, yaw_deg=yaw))
-    return tuple(result)
-
-
 def route_reachable_waypoints(
     start: Waypoint,
     capture_waypoints: tuple[Waypoint, ...],
