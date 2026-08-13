@@ -7,6 +7,12 @@ allow_overflight_above_buildings: true
 scan_direction_deg: 90.0
 scan_pattern: auto
 minimum_coverage_ratio: 0.95
+capture_frequency_hz: 2.0
+control_point_spacing_m: 10.0
+coverage_speed_mps: 5.0
+connector_speed_mps: 4.0
+obstacle_speed_mps: 2.5
+return_speed_mps: 4.0
 camera:
   image_width_px: 1920
   image_height_px: 1080

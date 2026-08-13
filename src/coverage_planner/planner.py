@@ -2,23 +2,33 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from itertools import pairwise
 from math import hypot
 from typing import Literal
 
+from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 
 from coverage_planner.camera import ground_footprint_dimensions
 from coverage_planner.coverage import (
+    build_continuous_flight_plan,
     evaluate_patch_coverage,
     generate_contour_capture_plan,
     optimize_scan_direction,
+    prepare_lane_route,
     supplement_uncovered_patches,
 )
 from coverage_planner.coverage.scanlines import CapturePlan
 from coverage_planner.geometry import build_effective_search_area
-from coverage_planner.models import CameraConfig, Patch, PatchGridConfig, SemanticMap, Waypoint
+from coverage_planner.models import (
+    CameraConfig,
+    ContinuousFlightPlan,
+    Patch,
+    PatchGridConfig,
+    SemanticMap,
+    Waypoint,
+)
 from coverage_planner.models.search_area import EffectiveSearchArea, Polygonal
 from coverage_planner.partition import generate_patches
 from coverage_planner.routing import (
@@ -59,6 +69,7 @@ class PlanResult:
     warnings: tuple[str, ...]
     scan_pattern: str = "lawn_mower"
     strategy_comparison: tuple[StrategyMetrics, ...] = ()
+    continuous_flight: ContinuousFlightPlan | None = None
 
     @property
     def path_length_m(self) -> float:
@@ -75,6 +86,12 @@ class CoveragePlanner:
         minimum_coverage_ratio: float = 0.95,
         return_to_start: bool = True,
         scan_pattern: Literal["lawn_mower", "contour_outward", "auto"] = "lawn_mower",
+        capture_frequency_hz: float = 2.0,
+        control_point_spacing_m: float = 10.0,
+        coverage_speed_mps: float = 5.0,
+        connector_speed_mps: float = 4.0,
+        obstacle_speed_mps: float = 2.5,
+        return_speed_mps: float = 4.0,
     ) -> PlanResult:
         effective = build_effective_search_area(semantic_map, search_geometry)
         dimensions = ground_footprint_dimensions(camera, flight_altitude_m=flight_altitude_m,
@@ -104,21 +121,17 @@ class CoveragePlanner:
         capture_plan = chosen.capture_plan
         waypoints = chosen.waypoints
         skipped_waypoint_ids = chosen.skipped_waypoint_ids
-        reachable_footprints = {
-            waypoint.id: waypoint.camera_footprint_enu
-            for waypoint in waypoints
-            if waypoint.capture and waypoint.camera_footprint_enu is not None
-        }
+        continuous_flight, continuous_footprints = build_continuous_flight_plan(
+            waypoints, camera=camera, flight_altitude_m=flight_altitude_m,
+            ground_elevation_m=ground_elevation_m,
+            capture_frequency_hz=capture_frequency_hz,
+            control_point_spacing_m=control_point_spacing_m,
+            coverage_speed_mps=coverage_speed_mps,
+            connector_speed_mps=connector_speed_mps,
+            obstacle_speed_mps=obstacle_speed_mps,
+            return_speed_mps=return_speed_mps, capture_region=effective.geometry)
         evaluated = evaluate_patch_coverage(
-            patches, reachable_footprints, minimum_coverage_ratio=minimum_coverage_ratio
-        )
-        patch_ids_by_waypoint: dict[str, list[str]] = {}
-        for patch in evaluated:
-            for waypoint_id in patch.covered_by_waypoint_ids:
-                patch_ids_by_waypoint.setdefault(waypoint_id, []).append(patch.id)
-        waypoints = tuple(
-            replace(waypoint, covered_patch_ids=tuple(patch_ids_by_waypoint.get(waypoint.id, ())))
-            for waypoint in waypoints
+            patches, continuous_footprints, minimum_coverage_ratio=minimum_coverage_ratio
         )
         warnings = ([f"{len(skipped_waypoint_ids)} capture waypoints are unreachable at the fixed altitude"]
                     if skipped_waypoint_ids else [])
@@ -126,7 +139,7 @@ class CoveragePlanner:
         comparison = tuple(item.metrics for item in sorted(candidates, key=lambda item: item.pattern))
         return PlanResult(semantic_map, effective, evaluated, waypoints, obstacles,
                           capture_plan.scan_direction_deg, unreachable, tuple(warnings),
-                          chosen.pattern, comparison)
+                          chosen.pattern, comparison, continuous_flight)
 
     def _run_pattern(
         self, *, pattern: str, effective_geometry: Polygonal, patches: tuple[Patch, ...],
@@ -156,11 +169,17 @@ class CoveragePlanner:
             capture_plan, patches, camera=camera, flight_altitude_m=flight_altitude_m,
             ground_elevation_m=ground_elevation_m, minimum_coverage_ratio=minimum_coverage_ratio)
         start_wp = Waypoint("wp_start", 0, "transit", *start, 0, -90, False)
+        route_points, pre_skipped = prepare_lane_route(
+            capture_plan, start_enu_m=(start[0], start[1]), obstacles=obstacle_geometry)
         waypoints, skipped = route_reachable_waypoints(
-            start_wp, capture_plan.capture_waypoints, obstacle_geometry,
+            start_wp, route_points, obstacle_geometry,
             return_to_start=return_to_start)
-        footprints = {w.id: w.camera_footprint_enu for w in waypoints
-                      if w.capture and w.camera_footprint_enu is not None}
+        skipped = (*pre_skipped, *skipped)
+        footprints = {
+            w.id: w.camera_footprint_enu for w in capture_plan.capture_waypoints
+            if w.camera_footprint_enu is not None
+            and not obstacle_geometry.covers(Point(w.x, w.y))
+        }
         evaluated = evaluate_patch_coverage(
             patches, footprints, minimum_coverage_ratio=minimum_coverage_ratio)
         effective_area = sum(p.area_m2 for p in patches)

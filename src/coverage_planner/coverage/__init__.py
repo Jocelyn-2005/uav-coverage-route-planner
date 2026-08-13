@@ -1,5 +1,6 @@
 """Coverage generation and evaluation."""
 
+from coverage_planner.coverage.continuous import build_continuous_flight_plan
 from coverage_planner.coverage.contours import generate_contour_capture_plan
 from coverage_planner.coverage.evaluation import (
     CoverageEvaluationError,
@@ -8,6 +9,7 @@ from coverage_planner.coverage.evaluation import (
 from coverage_planner.coverage.optimization import (
     DirectionScore,
     optimize_scan_direction,
+    prepare_lane_route,
     supplement_uncovered_patches,
 )
 from coverage_planner.coverage.scanlines import (
@@ -21,9 +23,11 @@ __all__ = [
     "CoverageEvaluationError",
     "DirectionScore",
     "ScanlinePlanningError",
+    "build_continuous_flight_plan",
     "evaluate_patch_coverage",
     "generate_capture_plan",
     "generate_contour_capture_plan",
     "optimize_scan_direction",
+    "prepare_lane_route",
     "supplement_uncovered_patches",
 ]

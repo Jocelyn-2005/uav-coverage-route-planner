@@ -26,12 +26,20 @@ HOME_ENU_M = (153.4, 67.2)
 
 class PlanRequest(BaseModel):
     search_geometry: dict[str, Any]
+    home_x_m: float = HOME_ENU_M[0]
+    home_y_m: float = HOME_ENU_M[1]
     flight_altitude_m: float = Field(gt=0)
     horizontal_clearance_m: float = Field(ge=0)
     vertical_clearance_m: float = Field(ge=0)
     scan_direction_deg: float | None = None
     camera: CameraConfig
     scan_pattern: Literal["lawn_mower", "contour_outward", "auto"] = "auto"
+    capture_frequency_hz: float = Field(default=2.0, gt=0)
+    control_point_spacing_m: float = Field(default=10.0, gt=0)
+    coverage_speed_mps: float = Field(default=5.0, gt=0)
+    connector_speed_mps: float = Field(default=4.0, gt=0)
+    obstacle_speed_mps: float = Field(default=2.5, gt=0)
+    return_speed_mps: float = Field(default=4.0, gt=0)
 
 
 app = FastAPI(title="Coverage Search Planner")
@@ -74,11 +82,17 @@ def plan(request: PlanRequest) -> dict[str, Any]:
         result = CoveragePlanner().plan(
             semantic_map=semantic, search_geometry=shape(request.search_geometry), camera=request.camera,
             flight_altitude_m=request.flight_altitude_m,
-            start=(HOME_ENU_M[0], HOME_ENU_M[1], request.flight_altitude_m),
+            start=(request.home_x_m, request.home_y_m, request.flight_altitude_m),
             horizontal_clearance_m=request.horizontal_clearance_m,
             vertical_clearance_m=request.vertical_clearance_m,
             scan_direction_deg=request.scan_direction_deg,
             scan_pattern=request.scan_pattern,
+            capture_frequency_hz=request.capture_frequency_hz,
+            control_point_spacing_m=request.control_point_spacing_m,
+            coverage_speed_mps=request.coverage_speed_mps,
+            connector_speed_mps=request.connector_speed_mps,
+            obstacle_speed_mps=request.obstacle_speed_mps,
+            return_speed_mps=request.return_speed_mps,
         )
         export_plan(result, RESULTS)
         return {"summary": {
@@ -88,6 +102,11 @@ def plan(request: PlanRequest) -> dict[str, Any]:
             "unreachable": list(result.unreachable_patch_ids),
             "scan_pattern": result.scan_pattern,
             "path_length_m": result.path_length_m,
+            "lane_count": len(result.continuous_flight.lanes) if result.continuous_flight else 0,
+            "flight_waypoint_count": len(result.continuous_flight.waypoints)
+                if result.continuous_flight else 0,
+            "sampled_image_count": result.continuous_flight.sampled_footprint_count
+                if result.continuous_flight else 0,
             "strategy_comparison": [{
                 "pattern": item.pattern, "coverage_ratio": item.coverage_ratio,
                 "capture_count": item.capture_waypoint_count,
@@ -95,7 +114,7 @@ def plan(request: PlanRequest) -> dict[str, Any]:
                 "path_length_m": item.path_length_m,
                 "unreachable_count": item.unreachable_patch_count,
             } for item in result.strategy_comparison]},
-            "home": [HOME_ENU_M[0], HOME_ENU_M[1], request.flight_altitude_m],
+            "home": [request.home_x_m, request.home_y_m, request.flight_altitude_m],
             "effective_area": mapping(result.effective_area.geometry),
             "obstacles": mapping(result.obstacles.geometry),
             "patches": [{"id":p.id,"geometry":mapping(p.geometry),"covered":p.covered,"ratio":p.coverage_ratio} for p in result.patches],
@@ -103,6 +122,18 @@ def plan(request: PlanRequest) -> dict[str, Any]:
                 "yaw_deg":w.yaw_deg,"covered_patch_ids":list(w.covered_patch_ids),
                 "camera_footprint_enu":mapping(w.camera_footprint_enu) if w.camera_footprint_enu else None}
                 for w in result.waypoints],
+            "flight_waypoints": [{
+                "id": w.id, "x": w.x, "y": w.y, "z": w.z,
+                "heading_deg": w.heading_deg, "speed_mps": w.speed_mps,
+            } for w in result.continuous_flight.waypoints] if result.continuous_flight else [],
+            "route_segments": [{
+                "id": segment.id, "kind": segment.kind,
+                "start_waypoint_id": segment.start_waypoint_id,
+                "end_waypoint_id": segment.end_waypoint_id,
+                "heading_deg": segment.heading_deg, "speed_mps": segment.speed_mps,
+                "capture_enabled": segment.capture_enabled,
+            } for segment in result.continuous_flight.route_segments]
+                if result.continuous_flight else [],
         }
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -110,7 +141,8 @@ def plan(request: PlanRequest) -> dict[str, Any]:
 
 @app.get("/api/export/{filename}")
 def download(filename: str) -> FileResponse:
-    allowed={"waypoints.json","waypoints.csv","patches.geojson","route.geojson","coverage_report.json","visualization.png"}
+    allowed={"waypoints.json","waypoints.csv","flight_plan.json","flight_plan.yaml",
+             "patches.geojson","route.geojson","coverage_report.json","visualization.png"}
     if filename not in allowed or not (RESULTS/filename).is_file():
         raise HTTPException(status_code=404, detail="export not found")
     return FileResponse(RESULTS/filename, filename=filename)

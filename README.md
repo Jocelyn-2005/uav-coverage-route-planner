@@ -26,8 +26,19 @@ uv run coverage-planner plan \
   --output results/example_run
 ```
 
-The command writes `waypoints.json`, `waypoints.csv`, `patches.geojson`,
-`route.geojson`, `coverage_report.json`, and `visualization.png`.
+The command writes the continuous-flight protocol as `flight_plan.json` and
+`flight_plan.yaml`, plus compatibility waypoints, GeoJSON, coverage report,
+and static visualization artifacts.
+
+The v2 protocol describes coverage lanes, connectors, obstacle-avoidance
+segments, return flight, and control waypoints with explicit heading and
+speed. Image capture is continuous during flight at the configured frequency;
+control waypoints are not camera trigger points.
+
+Every straight route segment is divided into uniformly spaced control points.
+`control_point_spacing_m` sets the maximum spacing (10 metres by default), so a
+vehicle adapter can continuously track the intended segment instead of flying
+only between distant turns.
 
 ## Web planner
 
@@ -48,6 +59,9 @@ ENU map layers, mission/camera settings, planning, inspection, and exports.
 - Buildings may be flown over only when fixed altitude exceeds building height
   plus vertical clearance. The planner never raises altitude automatically.
 - Version 0.1 supports nadir cameras only (`pitch_deg = -90`).
+- Lane spacing is derived from altitude, camera FOV, and requested lateral
+  overlap. Along-track image spacing is derived from speed and capture
+  frequency and checked against the requested forward overlap.
 
 See [semantic map schema](docs/semantic-map-schema.md) and
 [future design](docs/future-design.md).
