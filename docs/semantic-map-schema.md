@@ -1,19 +1,16 @@
-# Observed Yungu2030 semantic-map schema
+# 云谷 Yungu2030 语义地图格式
 
-The source asset was inspected before implementing the models. Its top-level
-keys are `schema_version`, `world_name`, `coordinate_frame`, `units`,
-`search_area`, `nodes`, and `metadata`.
+本文记录当前解析器实际支持的输入格式。以下字段来自对源数据的检查，规划器不会把地图范围或建筑数量硬编码到算法中。
 
-- The map declares schema `1.0`, frame `ENU`, and units `meters`.
-- `search_area` is a four-coordinate rectangle. Its actual bounds are read from
-  the file, never hardcoded by the planner.
-- There are 43 nodes: 25 buildings, 14 areas, and 4 transport facilities.
-- Every observed node has a rectangular shape with `min_corner` and
-  `max_corner` in ENU x/y metres.
-- Every node property contains `category`, `type`, `label`, `passability`,
-  `visibility`, `elevation_min_m`, and `elevation_max_m`.
-- Metadata records whether ground truth is excluded and the source asset.
+顶层字段为 `schema_version`、`world_name`、`coordinate_frame`、`units`、
+`search_area`、`nodes` 和 `metadata`。
 
-The current parser intentionally validates this observed format strictly. New
-shape types or schema versions should be added only after inspecting real input
-that uses them.
+- 地图声明 schema `1.0`、坐标系 `ENU`、单位 `meters`；
+- `search_area` 当前为四点矩形，实际边界始终从文件读取；
+- 示例数据有 43 个节点：25 栋建筑、14 个区域和 4 个交通设施；
+- 当前节点形状均为矩形，由 ENU 米制 `min_corner` 和 `max_corner` 描述；
+- 节点属性包括 `category`、`type`、`label`、`passability`、`visibility`、
+  `elevation_min_m` 和 `elevation_max_m`；
+- `metadata` 记录真值排除状态和源资产。
+
+当前解析器有意严格校验这一已观察格式。增加新图形类型或 schema 版本前，应先检查真实输入并为其增加模型与测试。
