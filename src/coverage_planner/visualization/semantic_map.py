@@ -69,6 +69,14 @@ def render_semantic_map(
                 linewidth=0.8,
             )
         )
+    for region in semantic_map.excluded_search_regions:
+        low = region.shape.min_corner
+        high = region.shape.max_corner
+        corners = [(low[0], low[1]), (high[0], low[1]),
+                   (high[0], high[1]), (low[0], high[1])]
+        axes.add_patch(PolygonPatch(
+            corners, facecolor="#343a40", alpha=0.55, edgecolor="#111111",
+            linewidth=1.0, hatch="////"))
     boundary = semantic_map.search_area.coords + [semantic_map.search_area.coords[0]]
     axes.plot([point[0] for point in boundary], [point[1] for point in boundary], color="#c53131", linewidth=1.5)
     axes.set_title(f"{semantic_map.world_name} semantic map")

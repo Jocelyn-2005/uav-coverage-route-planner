@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,7 +50,9 @@ class TwoDroneCoveragePlanner:
                 camera=camera, start=assignment.start, **planner_options)
             return DronePlan(assignment.drone_id, assignment.search_geometry, result)
 
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="coverage-drone") as executor:
-            futures = [executor.submit(solve, assignment) for assignment in assignments]
-            plans = tuple(future.result() for future in futures)
-        return MultiDronePlan((plans[0], plans[1]))
+        # GEOS overlay operations are intentionally kept in one thread.  Both
+        # missions still belong to one planning transaction and neither vehicle
+        # is released until both results are complete.
+        first_plan = solve(first)
+        second_plan = solve(second)
+        return MultiDronePlan((first_plan, second_plan))

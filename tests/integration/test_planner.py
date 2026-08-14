@@ -48,18 +48,14 @@ def test_planner_is_deterministic() -> None:
     assert CoveragePlanner().plan(**kwargs)==CoveragePlanner().plan(**kwargs)  # type: ignore[arg-type]
 
 
-def test_auto_compares_both_scan_patterns_and_returns_home() -> None:
+def test_lawn_mower_returns_home_and_avoids_obstacles() -> None:
     result = CoveragePlanner().plan(
         semantic_map=semantic_map(), search_geometry=box(0, 0, 40, 30), camera=camera(),
-        flight_altitude_m=10, start=(20, 15, 10), scan_pattern="auto")
-    assert {item.pattern for item in result.strategy_comparison} == {
-        "lawn_mower", "contour_outward"}
-    assert result.scan_pattern in {"lawn_mower", "contour_outward"}
+        flight_altitude_m=10, start=(20, 15, 10), scan_pattern="lawn_mower")
+    assert {item.pattern for item in result.strategy_comparison} == {"lawn_mower"}
+    assert result.scan_pattern == "lawn_mower"
     assert (result.planning_route[0].x, result.planning_route[0].y) == (20, 15)
     assert (result.planning_route[-1].x, result.planning_route[-1].y) == (20, 15)
-    best_coverage = max(item.coverage_ratio for item in result.strategy_comparison)
-    assert next(item for item in result.strategy_comparison
-                if item.pattern == result.scan_pattern).coverage_ratio >= best_coverage - 0.01
     points = {waypoint.id: waypoint for waypoint in result.continuous_flight.waypoints}
     for segment in result.continuous_flight.route_segments:
         start, end = points[segment.start_waypoint_id], points[segment.end_waypoint_id]

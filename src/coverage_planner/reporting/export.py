@@ -53,6 +53,9 @@ def export_multi_plan(plan: MultiDronePlan, output_dir: str | Path) -> Path:
     _json(output / "mission_manifest.json", {
         "schema_version": "1.0", "mission_type": "independent_two_drone_detection",
         "temporal_collision_avoidance": False, "simultaneous_start": True,
+        "mission_status": ("ready" if all(
+            drone.result.coverage_requirement_met for drone in plan.drones)
+            else "infeasible_coverage"),
         "drones": drones,
     })
     return output
@@ -62,7 +65,9 @@ def _summary(result: PlanResult) -> dict[str, object]:
     segment_lengths: dict[str, float] = {}
     for segment in result.continuous_flight.route_segments:
         segment_lengths[segment.kind] = segment_lengths.get(segment.kind, 0.0) + segment.length_m
-    noncoverage = sum(value for key, value in segment_lengths.items() if key != "coverage_lane")
+    noncoverage = sum(
+        segment.length_m for segment in result.continuous_flight.route_segments
+        if not segment.detection_enabled)
     return {"flight_waypoint_count":len(result.continuous_flight.waypoints),
       "route_segment_count":len(result.continuous_flight.route_segments),
       "coverage_lane_count":len(result.continuous_flight.lanes),"path_length_m":result.path_length_m,
@@ -70,6 +75,8 @@ def _summary(result: PlanResult) -> dict[str, object]:
       "effective_search_area_m2":effective,"building_excluded_area_m2":result.effective_area.metrics.building_excluded_area_m2,
       "covered_area_m2":covered,"uncovered_area_m2":max(0,effective-covered),
       "coverage_ratio":covered/effective if effective else 0,"scan_direction_deg":result.scan_direction_deg,
+      "minimum_required_coverage_ratio":result.minimum_required_coverage_ratio,
+      "coverage_requirement_met":result.coverage_requirement_met,
       "scan_pattern":result.scan_pattern,
       "strategy_comparison":[{
           "pattern": item.pattern, "coverage_ratio": item.coverage_ratio,
@@ -79,7 +86,7 @@ def _summary(result: PlanResult) -> dict[str, object]:
       } for item in result.strategy_comparison],
       "deadhead_distance_m":noncoverage,
       "turn_count":max(0, len(result.continuous_flight.lanes)-1),
-      "minimum_obstacle_clearance_m":None,
+      "minimum_obstacle_clearance_m":result.minimum_obstacle_clearance_m,
       "coverage_lane_length_m":segment_lengths.get("coverage_lane", 0.0),
       "connector_length_m":segment_lengths.get("connector", 0.0),
       "obstacle_avoidance_length_m":segment_lengths.get("obstacle_avoidance", 0.0),
@@ -93,6 +100,8 @@ def _flight_mission(result: PlanResult) -> dict[str, object]:
     flight = result.continuous_flight
     return {
         "schema_version": "3.0", "coordinate_frame": "ENU", "units": "meters",
+        "mission_status": ("ready" if result.coverage_requirement_met
+                           else "infeasible_coverage"),
         "map_id": result.semantic_map.world_name,
         "video_detection": {
             "mode": "continuous_video_stream",
@@ -122,6 +131,8 @@ def _flight_mission(result: PlanResult) -> dict[str, object]:
             "id": waypoint.id, "sequence": waypoint.sequence,
             "x": waypoint.x, "y": waypoint.y, "z": waypoint.z,
             "heading_deg": waypoint.heading_deg, "speed_mps": waypoint.speed_mps,
+            "turn_in_place": waypoint.turn_in_place,
+            "hold_time_s": waypoint.hold_time_s,
         } for waypoint in flight.waypoints],
         "summary": _summary(result),
     }

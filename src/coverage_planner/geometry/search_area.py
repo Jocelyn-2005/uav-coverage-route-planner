@@ -9,7 +9,11 @@ from shapely.geometry import GeometryCollection, MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.validation import explain_validity
 
-from coverage_planner.io.semantic_map import rectangle_geometry, search_area_geometry
+from coverage_planner.io.semantic_map import (
+    building_safety_geometry,
+    excluded_search_geometries,
+    search_area_geometry,
+)
 from coverage_planner.models.search_area import (
     EffectiveSearchArea,
     Polygonal,
@@ -36,10 +40,13 @@ def build_effective_search_area(
 
     clipped = _polygonal_parts(requested.intersection(map_geometry))
     building_union = _union_polygonal(
-        rectangle_geometry(node.shape) for node in semantic_map.building_nodes
+        building_safety_geometry(semantic_map, node)
+        for node in semantic_map.building_nodes
+        if node.properties.ground_contact
     )
     explicit_union = _union_polygonal(
-        _validate_polygonal(region, "excluded region") for region in excluded_regions
+        _validate_polygonal(region, "excluded region")
+        for region in (*excluded_search_geometries(semantic_map), *tuple(excluded_regions))
     )
 
     buildings_in_request = _polygonal_parts(clipped.intersection(building_union))

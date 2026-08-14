@@ -19,6 +19,8 @@ class FlightWaypoint:
     z: float
     heading_deg: float
     speed_mps: float
+    turn_in_place: bool = False
+    hold_time_s: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

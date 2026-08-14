@@ -7,8 +7,8 @@ from coverage_planner.geometry.calibration import MapCalibration
 from coverage_planner.geometry.search_area import build_effective_search_area
 from coverage_planner.io.geojson import load_polygonal_geojson
 from coverage_planner.io.semantic_map import (
+    building_safety_geometry,
     load_semantic_map,
-    rectangle_geometry,
     search_area_geometry,
 )
 from coverage_planner.visualization import render_semantic_map
@@ -32,15 +32,27 @@ def test_builds_real_yungu_outdoor_search_area() -> None:
     requested = load_polygonal_geojson(EXAMPLE.parent / "search_area.geojson")
     result = build_effective_search_area(semantic_map, requested)
     expected_building_area = unary_union([
-        rectangle_geometry(node.shape) for node in semantic_map.building_nodes
+        building_safety_geometry(semantic_map, node) for node in semantic_map.building_nodes
+        if node.properties.ground_contact
     ]).intersection(requested).area
     assert result.metrics.requested_area_m2 == pytest.approx(requested.area)
     assert result.metrics.outside_map_area_m2 == pytest.approx(0)
     assert result.metrics.building_excluded_area_m2 == pytest.approx(expected_building_area)
+    assert result.metrics.explicit_excluded_area_m2 > 0
     assert result.metrics.effective_search_area_m2 == pytest.approx(
-        requested.area - expected_building_area
-    )
+        requested.area - expected_building_area - result.metrics.explicit_excluded_area_m2)
     assert result.geometry.intersection(result.building_exclusion_geometry).area == pytest.approx(0)
+
+
+def test_building9_connectors_are_ground_buildings_and_gap_is_not_searchable() -> None:
+    semantic_map = load_semantic_map(EXAMPLE)
+    connectors = {node.id: node for node in semantic_map.building_nodes
+                  if node.id in {"collider_building9.001", "collider_building9.002"}}
+    assert set(connectors) == {"collider_building9.001", "collider_building9.002"}
+    assert all(node.properties.ground_contact for node in connectors.values())
+    assert all(node.properties.elevation_min_m == 0 for node in connectors.values())
+    assert [region.id for region in semantic_map.excluded_search_regions] == [
+        "no_search_between_building9_connectors"]
 
 
 def test_renders_real_yungu_map(tmp_path: Path) -> None:

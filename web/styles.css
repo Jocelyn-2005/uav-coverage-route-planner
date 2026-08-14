@@ -31,6 +31,7 @@ svg{width:100%;height:100%}
 .travelled{fill:none;stroke:#ffb000;stroke-width:1.1}
 .draw-region{width:100%;margin:3px 0;padding:7px}.draw-region.drone-2{background:#e67700}
 .hint{color:#65717c}.valid-coverage{pointer-events:none}
+.viewpoint-coverage{pointer-events:none}
 #draw-tip{position:absolute;top:12px;left:12px;background:#17202a;color:#fff;padding:8px 12px;display:none}
 #error{position:absolute;bottom:12px;left:12px;background:#b42318;color:#fff;padding:8px;display:none}
 #exports a{display:block;color:#1864ab;font-size:12px;margin:5px 0}

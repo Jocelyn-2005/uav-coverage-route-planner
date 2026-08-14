@@ -7,7 +7,7 @@ from shapely.geometry import MultiPoint, Polygon
 from shapely.geometry.base import BaseGeometry
 
 from coverage_planner.camera import ground_footprint_polygon
-from coverage_planner.io.semantic_map import rectangle_geometry
+from coverage_planner.io.semantic_map import building_safety_elevations, building_safety_geometry
 from coverage_planner.models.camera import CameraConfig
 from coverage_planner.models.search_area import Polygonal
 from coverage_planner.models.semantic_map import SemanticMap
@@ -30,8 +30,8 @@ def visible_detection_ground(
     camera_x, camera_y = center_enu_m
     target_plane_z = ground_elevation_m + camera.target_height_m
     for node in semantic_map.building_nodes:
-        base = rectangle_geometry(node.shape)
-        height = node.properties.elevation_max_m
+        base = building_safety_geometry(semantic_map, node)
+        _, height = building_safety_elevations(semantic_map, node)
         if height <= target_plane_z:
             shadows.append(base)
             continue

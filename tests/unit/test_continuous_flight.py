@@ -109,6 +109,35 @@ def test_coverage_lane_explicitly_enables_capture() -> None:
     assert plan.route_segments[0].detection_enabled
 
 
+def test_removes_consecutive_duplicate_route_points() -> None:
+    route = (
+        Waypoint("start", 0, "transit", 0, 0, 25, 0, -90, False),
+        Waypoint("a", 1, "capture", 10, 0, 25, 0, -90, True, 0, 0),
+        Waypoint("duplicate", 2, "capture", 10, 0, 25, 0, -90, True, 0, 0),
+        Waypoint("b", 3, "capture", 20, 0, 25, 0, -90, True, 0, 0),
+    )
+    plan, _ = build_continuous_flight_plan(
+        route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        obstacle_speed_mps=2.5, return_speed_mps=4)
+    assert all(segment.length_m > 0 for segment in plan.route_segments)
+
+
+def test_marks_a_foldback_as_turn_in_place() -> None:
+    route = (
+        Waypoint("start", 0, "transit", 0, 0, 25, 0, -90, False),
+        Waypoint("tip", 1, "capture", 10, 0, 25, 0, -90, True),
+        Waypoint("back", 2, "transit", 1, 0, 25, 0, -90, False),
+    )
+    plan, _ = build_continuous_flight_plan(
+        route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        obstacle_speed_mps=2.5, return_speed_mps=4,
+        control_point_spacing_m=20)
+    assert plan.waypoints[1].turn_in_place
+    assert plan.waypoints[1].hold_time_s == 0.5
+
+
 def test_connector_captures_only_when_it_contributes_to_requested_region() -> None:
     route = (
         Waypoint("a", 1, "capture", 0, 0, 25, 0, -90, True, 0, 0),

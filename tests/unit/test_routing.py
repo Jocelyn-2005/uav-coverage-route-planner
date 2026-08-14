@@ -41,6 +41,38 @@ def test_selects_obstacles_by_altitude_and_buffers() -> None:
     assert all_obstacles.building_ids == ("low", "high")
 
 
+def test_allows_flight_below_or_above_an_elevated_structure() -> None:
+    payload = semantic_map().model_dump()
+    payload["nodes"][0]["properties"].update({
+        "elevation_min_m": 20, "elevation_max_m": 25, "ground_contact": False})
+    elevated = SemanticMap.model_validate(payload)
+    below = select_flight_obstacles(
+        elevated, flight_altitude_m=17, vertical_clearance_m=2,
+        horizontal_clearance_m=0)
+    inside = select_flight_obstacles(
+        elevated, flight_altitude_m=19, vertical_clearance_m=2,
+        horizontal_clearance_m=0)
+    above = select_flight_obstacles(
+        elevated, flight_altitude_m=28, vertical_clearance_m=2,
+        horizontal_clearance_m=0)
+    assert "low" not in below.building_ids
+    assert "low" in inside.building_ids
+    assert "low" not in above.building_ids
+
+
+def test_uses_visual_safety_override_instead_of_smaller_collision_box() -> None:
+    payload = semantic_map().model_dump()
+    payload["building_safety_overrides"] = {
+        "low": {"min_corner": [3, 1], "max_corner": [10, 9],
+                "elevation_min_m": 0, "elevation_max_m": 35}}
+    overridden = SemanticMap.model_validate(payload)
+    obstacles = select_flight_obstacles(
+        overridden, flight_altitude_m=30, vertical_clearance_m=2,
+        horizontal_clearance_m=3)
+    assert "low" in obstacles.building_ids
+    assert obstacles.geometry.covers(box(0, -2, 13, 12))
+
+
 def test_visibility_graph_routes_around_obstacle() -> None:
     obstacle = box(4, 2, 6, 8)
     points = shortest_collision_free_path((0, 5), (10, 5), obstacle)

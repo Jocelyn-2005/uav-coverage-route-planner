@@ -46,6 +46,7 @@ class SemanticProperties(StrictModel):
     visibility: str = Field(min_length=1)
     elevation_min_m: float
     elevation_max_m: float
+    ground_contact: bool = True
 
     @model_validator(mode="after")
     def validate_elevation(self) -> SemanticProperties:
@@ -57,6 +58,31 @@ class SemanticProperties(StrictModel):
 class SemanticNode(StrictModel):
     id: str = Field(min_length=1)
     properties: SemanticProperties
+    shape: RectangleShape
+
+
+class SafetyVolume(StrictModel):
+    min_corner: Point2D
+    max_corner: Point2D
+    elevation_min_m: float
+    elevation_max_m: float
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> SafetyVolume:
+        if not all(low < high for low, high in zip(
+                self.min_corner, self.max_corner, strict=True)):
+            raise ValueError("safety volume min_corner must be lower than max_corner")
+        if self.elevation_min_m > self.elevation_max_m:
+            raise ValueError("safety volume minimum elevation cannot exceed maximum")
+        return self
+
+
+class ExcludedSearchRegion(StrictModel):
+    """Ground that is intentionally outside the detection responsibility."""
+
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
     shape: RectangleShape
 
 
@@ -72,6 +98,8 @@ class SemanticMap(StrictModel):
     units: Literal["meters"]
     search_area: SearchArea
     nodes: list[SemanticNode]
+    building_safety_overrides: dict[str, SafetyVolume] = Field(default_factory=dict)
+    excluded_search_regions: list[ExcludedSearchRegion] = Field(default_factory=list)
     metadata: SemanticMapMetadata
 
     @model_validator(mode="after")
@@ -79,6 +107,12 @@ class SemanticMap(StrictModel):
         ids = [node.id for node in self.nodes]
         if len(ids) != len(set(ids)):
             raise ValueError("semantic node IDs must be unique")
+        unknown = set(self.building_safety_overrides).difference(ids)
+        if unknown:
+            raise ValueError(f"safety overrides reference unknown nodes: {sorted(unknown)}")
+        region_ids = [region.id for region in self.excluded_search_regions]
+        if len(region_ids) != len(set(region_ids)):
+            raise ValueError("excluded search region IDs must be unique")
         return self
 
     @property

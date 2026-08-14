@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from shapely import unary_union
 from shapely.geometry import MultiPolygon, Polygon
 
-from coverage_planner.io.semantic_map import rectangle_geometry
+from coverage_planner.io.semantic_map import building_safety_elevations, building_safety_geometry
 from coverage_planner.models.search_area import Polygonal
 from coverage_planner.models.semantic_map import SemanticMap
 
@@ -28,11 +28,17 @@ def select_flight_obstacles(
         raise ValueError("clearance values cannot be negative")
     selected = []
     for node in semantic_map.building_nodes:
-        blocked_by_height = node.properties.elevation_max_m + vertical_clearance_m >= flight_altitude_m
+        elevation_min_m, elevation_max_m = building_safety_elevations(semantic_map, node)
+        blocked_by_height = (
+            elevation_min_m - vertical_clearance_m
+            <= flight_altitude_m
+            <= elevation_max_m + vertical_clearance_m
+        )
         if not allow_overflight_above_buildings or blocked_by_height:
             selected.append(node)
     buffered = [
-        rectangle_geometry(node.shape).buffer(horizontal_clearance_m, join_style="mitre")
+        building_safety_geometry(semantic_map, node).buffer(
+            horizontal_clearance_m, join_style="mitre")
         for node in selected
     ]
     geometry = unary_union(buffered) if buffered else Polygon()

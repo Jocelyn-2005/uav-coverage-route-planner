@@ -60,6 +60,23 @@ def test_clips_to_map_and_subtracts_only_buildings() -> None:
     assert result.geometry.contains(box(10.1, 0.1, 11.9, 9.9))
 
 
+def test_does_not_remove_ground_below_an_elevated_structure() -> None:
+    payload = semantic_map().model_dump()
+    payload["nodes"][0]["properties"]["ground_contact"] = False
+    result = build_effective_search_area(SemanticMap.model_validate(payload), box(0, 0, 10, 10))
+    assert result.geometry.covers(box(4, 2, 8, 8))
+
+
+def test_subtracts_visual_safety_override_from_search_ground() -> None:
+    payload = semantic_map().model_dump()
+    payload["building_safety_overrides"] = {
+        "building_1": {"min_corner": [3, 1], "max_corner": [9, 9],
+                       "elevation_min_m": 0, "elevation_max_m": 15}}
+    result = build_effective_search_area(
+        SemanticMap.model_validate(payload), box(0, 0, 10, 10))
+    assert result.metrics.building_excluded_area_m2 == 48
+
+
 def test_supports_holes_and_disconnected_multipolygons() -> None:
     polygon_with_hole = Polygon(
         [(0, 0), (10, 0), (10, 10), (0, 10)],
@@ -87,6 +104,20 @@ def test_explicit_exclusion_does_not_double_count_building_overlap() -> None:
         + result.metrics.effective_search_area_m2
         == result.metrics.within_map_area_m2
     )
+
+
+def test_subtracts_map_authored_excluded_search_regions() -> None:
+    payload = semantic_map().model_dump()
+    payload["excluded_search_regions"] = [{
+        "id": "closed_yard",
+        "label": "Closed yard",
+        "reason": "No access and no detection responsibility",
+        "shape": {"type": "rectangle", "min_corner": [10, 2], "max_corner": [14, 6]},
+    }]
+    result = build_effective_search_area(
+        SemanticMap.model_validate(payload), box(0, 0, 15, 10))
+    assert result.metrics.explicit_excluded_area_m2 == 16
+    assert result.geometry.intersection(box(10, 2, 14, 6)).area == 0
 
 
 @pytest.mark.parametrize(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from itertools import pairwise
-from math import atan2, ceil, degrees, hypot
+from math import acos, atan2, ceil, degrees, hypot
 
 from shapely import unary_union
 from shapely.geometry import Polygon
@@ -133,6 +133,7 @@ def build_continuous_flight_plan(
 
     commanded_waypoints, segments = _densify_commands(
         commanded_waypoints, segments, control_point_spacing_m)
+    commanded_waypoints = _annotate_sharp_turns(commanded_waypoints)
     lanes = _group_lanes(segments)
     return ContinuousFlightPlan(
         video_analysis_rate_hz=video_analysis_rate_hz,
@@ -202,6 +203,27 @@ def _densify_commands(
     return dense_waypoints, dense_segments
 
 
+def _annotate_sharp_turns(
+    waypoints: list[FlightWaypoint], *, minimum_internal_angle_deg: float = 60.0,
+) -> list[FlightWaypoint]:
+    """Require a controlled stop/yaw at corners unsafe for continuous tracking."""
+    for index in range(1, len(waypoints) - 1):
+        previous, current, following = waypoints[index - 1:index + 2]
+        incoming = (previous.x - current.x, previous.y - current.y)
+        outgoing = (following.x - current.x, following.y - current.y)
+        incoming_length = hypot(*incoming)
+        outgoing_length = hypot(*outgoing)
+        if incoming_length <= 1e-9 or outgoing_length <= 1e-9:
+            continue
+        cosine = max(-1.0, min(1.0, (
+            incoming[0] * outgoing[0] + incoming[1] * outgoing[1]
+        ) / (incoming_length * outgoing_length)))
+        internal_angle = degrees(acos(cosine))
+        if internal_angle < minimum_internal_angle_deg:
+            waypoints[index] = replace(current, turn_in_place=True, hold_time_s=0.5)
+    return waypoints
+
+
 def _segment_kind(start: Waypoint, end: Waypoint) -> SegmentKind:
     if end.id == "wp_home_return":
         return "return_home"
@@ -252,6 +274,14 @@ def _group_lanes(segments: list[RouteSegment]) -> tuple[CoverageLane, ...]:
 
 def _compact_route(route: tuple[Waypoint, ...]) -> tuple[Waypoint, ...]:
     """Reduce dense coverage samples while preserving turns and route semantics."""
+    deduplicated = [route[0]] if route else []
+    for waypoint in route[1:]:
+        previous = deduplicated[-1]
+        if hypot(waypoint.x - previous.x, waypoint.y - previous.y) <= 1e-8:
+            deduplicated[-1] = waypoint
+        else:
+            deduplicated.append(waypoint)
+    route = tuple(deduplicated)
     if len(route) < 3:
         return route
     compacted = [route[0]]

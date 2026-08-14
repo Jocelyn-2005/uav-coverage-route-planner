@@ -2,26 +2,27 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import pairwise
 from math import hypot
 from typing import Literal
 
 from shapely import unary_union
-from shapely.geometry import MultiPolygon, Point, Polygon
+from shapely.geometry import LineString, MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import nearest_points
 
-from coverage_planner.camera import ground_footprint_dimensions
+from coverage_planner.camera import ground_footprint_dimensions, ground_footprint_polygon
 from coverage_planner.coverage import (
     build_continuous_flight_plan,
     evaluate_patch_coverage,
-    generate_contour_capture_plan,
     optimize_scan_direction,
     prepare_lane_route,
     supplement_uncovered_patches,
 )
 from coverage_planner.coverage.scanlines import CapturePlan
 from coverage_planner.geometry import build_effective_search_area
+from coverage_planner.io.semantic_map import building_safety_geometry
 from coverage_planner.models import (
     CameraConfig,
     ContinuousFlightPlan,
@@ -70,6 +71,10 @@ class PlanResult:
     warnings: tuple[str, ...]
     continuous_flight: ContinuousFlightPlan
     visible_detection_geometry: Polygonal
+    visibility_samples: tuple[tuple[str, Polygonal], ...]
+    minimum_obstacle_clearance_m: float | None
+    minimum_required_coverage_ratio: float
+    coverage_requirement_met: bool
     scan_pattern: str = "lawn_mower"
     strategy_comparison: tuple[StrategyMetrics, ...] = ()
 
@@ -87,7 +92,7 @@ class CoveragePlanner:
         patch_config: PatchGridConfig | None = None, ground_elevation_m: float = 0.0,
         minimum_coverage_ratio: float = 0.95,
         return_to_start: bool = True,
-        scan_pattern: Literal["lawn_mower", "contour_outward", "auto"] = "lawn_mower",
+        scan_pattern: Literal["lawn_mower"] = "lawn_mower",
         video_analysis_rate_hz: float = 2.0,
         control_point_spacing_m: float = 10.0,
         coverage_speed_mps: float = 5.0,
@@ -104,7 +109,7 @@ class CoveragePlanner:
             vertical_clearance_m=vertical_clearance_m,
             horizontal_clearance_m=horizontal_clearance_m,
             allow_overflight_above_buildings=allow_overflight_above_buildings)
-        patterns = ("lawn_mower", "contour_outward") if scan_pattern == "auto" else (scan_pattern,)
+        patterns = (scan_pattern,)
         candidates = tuple(self._run_pattern(
             pattern=pattern, effective_geometry=effective.geometry, patches=patches,
             semantic_map=semantic_map,
@@ -137,9 +142,71 @@ class CoveragePlanner:
         evaluated = evaluate_patch_coverage(
             patches, continuous_footprints, minimum_coverage_ratio=minimum_coverage_ratio
         )
+        for _ in range(2):
+            covered_area = sum(p.area_m2 * p.coverage_ratio for p in evaluated)
+            if (not effective.geometry.area or
+                    covered_area / effective.geometry.area >= minimum_coverage_ratio):
+                break
+            supplemental_waypoints = list(capture_plan.capture_waypoints)
+            for patch in evaluated:
+                if patch.covered:
+                    continue
+                point = patch.geometry.representative_point()
+                if obstacles.geometry.covers(point):
+                    boundary = nearest_points(point, obstacles.geometry.boundary)[1]
+                    dx, dy = boundary.x - point.x, boundary.y - point.y
+                    length = hypot(dx, dy)
+                    if length <= 1e-9:
+                        continue
+                    point = Point(
+                        boundary.x + dx / length * 1e-5,
+                        boundary.y + dy / length * 1e-5)
+                sample_id = f"wp_{len(supplemental_waypoints) + 1:04d}"
+                supplemental_waypoints.append(Waypoint(
+                    id=sample_id, sequence=len(supplemental_waypoints) + 1,
+                    kind="capture", x=point.x, y=point.y, z=flight_altitude_m,
+                    yaw_deg=capture_plan.scan_direction_deg,
+                    camera_pitch_deg=camera.pitch_deg, capture=True,
+                    camera_footprint_enu=ground_footprint_polygon(
+                        camera, center_enu_m=(point.x, point.y),
+                        flight_altitude_m=flight_altitude_m,
+                        ground_elevation_m=ground_elevation_m,
+                        yaw_deg=capture_plan.scan_direction_deg)))
+            capture_plan = replace(
+                capture_plan, capture_waypoints=tuple(supplemental_waypoints))
+            route_points, post_skipped = prepare_lane_route(
+                capture_plan, start_enu_m=(start[0], start[1]),
+                obstacles=obstacles.geometry)
+            planning_route, post_route_skipped = route_reachable_waypoints(
+                Waypoint("wp_start", 0, "transit", *start, 0, -90, False),
+                route_points, obstacles.geometry, return_to_start=return_to_start)
+            skipped_point_ids = tuple(dict.fromkeys(
+                (*skipped_point_ids, *post_skipped, *post_route_skipped)))
+            continuous_flight, continuous_footprints = build_continuous_flight_plan(
+                planning_route, camera=camera, flight_altitude_m=flight_altitude_m,
+                ground_elevation_m=ground_elevation_m,
+                video_analysis_rate_hz=video_analysis_rate_hz,
+                control_point_spacing_m=control_point_spacing_m,
+                coverage_speed_mps=coverage_speed_mps,
+                connector_speed_mps=connector_speed_mps,
+                obstacle_speed_mps=obstacle_speed_mps,
+                return_speed_mps=return_speed_mps, capture_region=effective.geometry,
+                semantic_map=semantic_map)
+            evaluated = evaluate_patch_coverage(
+                patches, continuous_footprints,
+                minimum_coverage_ratio=minimum_coverage_ratio)
         warnings = ([f"{len(skipped_point_ids)} coverage points are unreachable at the fixed altitude"]
                     if skipped_point_ids else [])
         unreachable = tuple(p.id for p in evaluated if not p.covered)
+        effective_area_m2 = effective.geometry.area
+        covered_area_m2 = sum(p.area_m2 * p.coverage_ratio for p in evaluated)
+        achieved_coverage_ratio = (
+            covered_area_m2 / effective_area_m2 if effective_area_m2 else 0.0)
+        coverage_requirement_met = achieved_coverage_ratio >= minimum_coverage_ratio
+        if not coverage_requirement_met:
+            warnings.append(
+                f"coverage ratio {achieved_coverage_ratio:.4f} is below required "
+                f"{minimum_coverage_ratio:.4f}; mission is not ready for execution")
         comparison = tuple(item.metrics for item in sorted(candidates, key=lambda item: item.pattern))
         visible_union = (
             unary_union(tuple(continuous_footprints.values()))
@@ -147,9 +214,22 @@ class CoveragePlanner:
         visible_union = visible_union.intersection(effective.geometry)
         visible_detection_geometry = (
             visible_union if isinstance(visible_union, (Polygon, MultiPolygon)) else Polygon())
+        route_coordinates = [(waypoint.x, waypoint.y) for waypoint in planning_route]
+        route_geometry: BaseGeometry = (
+            LineString(route_coordinates) if len(route_coordinates) > 1
+            else Point(route_coordinates[0]))
+        blocked_nodes = tuple(node for node in semantic_map.building_nodes
+                              if node.id in obstacles.building_ids)
+        minimum_clearance = (
+            min(route_geometry.distance(building_safety_geometry(semantic_map, node))
+                for node in blocked_nodes)
+            if blocked_nodes else None)
         return PlanResult(semantic_map, effective, evaluated, planning_route, obstacles,
                           capture_plan.scan_direction_deg, unreachable, tuple(warnings),
                           continuous_flight, visible_detection_geometry,
+                          tuple(continuous_footprints.items()),
+                          minimum_clearance,
+                          minimum_coverage_ratio, coverage_requirement_met,
                           chosen.pattern, comparison)
 
     def _run_pattern(
@@ -162,11 +242,7 @@ class CoveragePlanner:
     ) -> PatternCandidate:
         from coverage_planner.coverage import generate_capture_plan
 
-        if pattern == "contour_outward":
-            capture_plan = generate_contour_capture_plan(
-                effective_geometry, camera=camera, flight_altitude_m=flight_altitude_m,
-                ground_elevation_m=ground_elevation_m, center_enu_m=(start[0], start[1]))
-        elif pattern == "lawn_mower":
+        if pattern == "lawn_mower":
             if scan_direction_deg is None:
                 capture_plan, _ = optimize_scan_direction(
                     effective_geometry, camera=camera, flight_altitude_m=flight_altitude_m,
@@ -175,8 +251,6 @@ class CoveragePlanner:
                 capture_plan = generate_capture_plan(
                     effective_geometry, camera=camera, flight_altitude_m=flight_altitude_m,
                     ground_elevation_m=ground_elevation_m, scan_direction_deg=scan_direction_deg)
-        else:
-            raise ValueError(f"unsupported scan pattern: {pattern}")
         capture_plan, _ = supplement_uncovered_patches(
             capture_plan, patches, camera=camera, flight_altitude_m=flight_altitude_m,
             ground_elevation_m=ground_elevation_m, minimum_coverage_ratio=minimum_coverage_ratio)

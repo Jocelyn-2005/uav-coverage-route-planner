@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from shapely.geometry import mapping, shape
+from shapely.geometry import LineString, box, mapping, shape
 
 from coverage_planner.geometry.calibration import MapCalibration
 from coverage_planner.io import load_semantic_map
+from coverage_planner.io.semantic_map import building_safety_elevations, building_safety_geometry
 from coverage_planner.models import CameraConfig
 from coverage_planner.multi_planner import DroneAssignment, TwoDroneCoveragePlanner
 from coverage_planner.planner import CoveragePlanner, PlanResult
@@ -23,6 +25,7 @@ EXAMPLE = ROOT / "examples/yungu2030"
 WEB = ROOT / "web"
 RESULTS = ROOT / "results/web_latest"
 HOME_ENU_M = (153.4, 67.2)
+PLANNING_LOCK = Lock()
 
 
 class PlanRequest(BaseModel):
@@ -34,7 +37,7 @@ class PlanRequest(BaseModel):
     vertical_clearance_m: float = Field(ge=0)
     scan_direction_deg: float | None = None
     camera: CameraConfig
-    scan_pattern: Literal["lawn_mower", "contour_outward", "auto"] = "auto"
+    scan_pattern: Literal["lawn_mower"] = "lawn_mower"
     video_analysis_rate_hz: float = Field(default=2.0, gt=0)
     control_point_spacing_m: float = Field(default=10.0, gt=0)
     coverage_speed_mps: float = Field(default=5.0, gt=0)
@@ -57,7 +60,7 @@ class DualPlanRequest(BaseModel):
     vertical_clearance_m: float = Field(ge=0)
     scan_direction_deg: float | None = None
     camera: CameraConfig
-    scan_pattern: Literal["lawn_mower", "contour_outward", "auto"] = "auto"
+    scan_pattern: Literal["lawn_mower"] = "lawn_mower"
     video_analysis_rate_hz: float = Field(default=2.0, gt=0)
     control_point_spacing_m: float = Field(default=10.0, gt=0)
     coverage_speed_mps: float = Field(default=5.0, gt=0)
@@ -89,8 +92,18 @@ def map_data() -> dict[str, Any]:
             ],
         },
         "search_area": mapping(shape({"type":"Polygon","coordinates":[[*semantic.search_area.coords, semantic.search_area.coords[0]]]})),
-        "buildings": [{"id":node.id,"height_m":node.properties.elevation_max_m,
-            "bounds":[*node.shape.min_corner,*node.shape.max_corner]} for node in semantic.building_nodes],
+        "buildings": [{
+            "id": node.id,
+            "height_m": building_safety_elevations(semantic, node)[1],
+            "bounds": list(building_safety_geometry(semantic, node).bounds),
+            "ground_contact": node.properties.ground_contact,
+        } for node in semantic.building_nodes],
+        "excluded_search_regions": [{
+            "id": region.id,
+            "label": region.label,
+            "reason": region.reason,
+            "geometry": mapping(box(*region.shape.min_corner, *region.shape.max_corner)),
+        } for region in semantic.excluded_search_regions],
     }
 
 
@@ -103,22 +116,23 @@ def background() -> FileResponse:
 def plan(request: PlanRequest) -> dict[str, Any]:
     try:
         semantic = load_semantic_map(EXAMPLE / "semantic_map.json")
-        result = CoveragePlanner().plan(
-            semantic_map=semantic, search_geometry=shape(request.search_geometry), camera=request.camera,
-            flight_altitude_m=request.flight_altitude_m,
-            start=(request.home_x_m, request.home_y_m, request.flight_altitude_m),
-            horizontal_clearance_m=request.horizontal_clearance_m,
-            vertical_clearance_m=request.vertical_clearance_m,
-            scan_direction_deg=request.scan_direction_deg,
-            scan_pattern=request.scan_pattern,
-            video_analysis_rate_hz=request.video_analysis_rate_hz,
-            control_point_spacing_m=request.control_point_spacing_m,
-            coverage_speed_mps=request.coverage_speed_mps,
-            connector_speed_mps=request.connector_speed_mps,
-            obstacle_speed_mps=request.obstacle_speed_mps,
-            return_speed_mps=request.return_speed_mps,
-        )
-        export_plan(result, RESULTS)
+        with PLANNING_LOCK:
+            result = CoveragePlanner().plan(
+                semantic_map=semantic, search_geometry=shape(request.search_geometry),
+                camera=request.camera, flight_altitude_m=request.flight_altitude_m,
+                start=(request.home_x_m, request.home_y_m, request.flight_altitude_m),
+                horizontal_clearance_m=request.horizontal_clearance_m,
+                vertical_clearance_m=request.vertical_clearance_m,
+                scan_direction_deg=request.scan_direction_deg,
+                scan_pattern=request.scan_pattern,
+                video_analysis_rate_hz=request.video_analysis_rate_hz,
+                control_point_spacing_m=request.control_point_spacing_m,
+                coverage_speed_mps=request.coverage_speed_mps,
+                connector_speed_mps=request.connector_speed_mps,
+                obstacle_speed_mps=request.obstacle_speed_mps,
+                return_speed_mps=request.return_speed_mps,
+            )
+            export_plan(result, RESULTS)
         return {"summary": _web_result(
             result, [request.home_x_m, request.home_y_m, request.flight_altitude_m])}
     except (ValueError, TypeError) as exc:
@@ -152,10 +166,11 @@ def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
             "obstacle_speed_mps": request.obstacle_speed_mps,
             "return_speed_mps": request.return_speed_mps,
         }
-        result = TwoDroneCoveragePlanner().plan(
-            assignments=assignments, semantic_map=semantic,
-            camera=request.camera, planner_options=options)
-        export_multi_plan(result, RESULTS)
+        with PLANNING_LOCK:
+            result = TwoDroneCoveragePlanner().plan(
+                assignments=assignments, semantic_map=semantic,
+                camera=request.camera, planner_options=options)
+            export_multi_plan(result, RESULTS)
         response = []
         for drone in result.drones:
             first = drone.result.continuous_flight.waypoints[0]
@@ -170,10 +185,24 @@ def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
 
 
 def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
+    route_coordinates = [(waypoint.x, waypoint.y)
+                         for waypoint in result.continuous_flight.waypoints]
+    route = LineString(route_coordinates) if len(route_coordinates) > 1 else None
+    route_length = route.length if route is not None else 0.0
+    visibility_samples = sorted(({
+        "id": sample_id,
+        "geometry": mapping(geometry),
+        "route_progress": (route.project(geometry.centroid) / route_length
+                           if route is not None and route_length else 0.0),
+    } for sample_id, geometry in result.visibility_samples),
+        key=lambda sample: (sample["route_progress"], sample["id"]))
     return {
             "coverage_ratio": sum(p.area_m2*p.coverage_ratio for p in result.patches)/result.effective_area.geometry.area,
+            "minimum_required_coverage_ratio": result.minimum_required_coverage_ratio,
+            "coverage_requirement_met": result.coverage_requirement_met,
             "unreachable": list(result.unreachable_patch_ids),
             "scan_pattern": result.scan_pattern,
+            "scan_direction_deg": result.scan_direction_deg,
             "path_length_m": result.path_length_m,
             "lane_count": len(result.continuous_flight.lanes),
             "flight_waypoint_count": len(result.continuous_flight.waypoints),
@@ -187,11 +216,13 @@ def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
             "home": home,
             "effective_area": mapping(result.effective_area.geometry),
             "visible_detection_area": mapping(result.visible_detection_geometry),
+            "visibility_samples": visibility_samples,
             "obstacles": mapping(result.obstacles.geometry),
             "patches": [{"id":p.id,"geometry":mapping(p.geometry),"covered":p.covered,"ratio":p.coverage_ratio} for p in result.patches],
             "flight_waypoints": [{
                 "id": w.id, "x": w.x, "y": w.y, "z": w.z,
                 "heading_deg": w.heading_deg, "speed_mps": w.speed_mps,
+                "turn_in_place": w.turn_in_place, "hold_time_s": w.hold_time_s,
             } for w in result.continuous_flight.waypoints],
             "route_segments": [{
                 "id": segment.id, "kind": segment.kind,

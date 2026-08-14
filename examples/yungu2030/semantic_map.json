@@ -332,8 +332,9 @@
         "label": "collider_building9.001",
         "passability": "restricted",
         "visibility": "public",
-        "elevation_min_m": 6.952478408813477,
-        "elevation_max_m": 17.89052391052246
+        "elevation_min_m": 0.0,
+        "elevation_max_m": 17.89052391052246,
+        "ground_contact": true
       },
       "shape": {
         "type": "rectangle",
@@ -355,8 +356,9 @@
         "label": "collider_building9.002",
         "passability": "restricted",
         "visibility": "public",
-        "elevation_min_m": 31.23356056213379,
-        "elevation_max_m": 42.171607971191406
+        "elevation_min_m": 0.0,
+        "elevation_max_m": 42.171607971191406,
+        "ground_contact": true
       },
       "shape": {
         "type": "rectangle",
@@ -1012,6 +1014,37 @@
           89.863037109375,
           103.5166244506836
         ]
+      }
+    }
+  ],
+  "building_safety_overrides": {
+    "collider_building1": {"min_corner": [263.9355, -3.8908], "max_corner": [306.2860, 48.4970], "elevation_min_m": -7.9611, "elevation_max_m": 53.8259},
+    "collider_building2": {"min_corner": [263.5890, 57.1460], "max_corner": [299.3960, 92.8430], "elevation_min_m": -7.6730, "elevation_max_m": 34.2895},
+    "collider_building3": {"min_corner": [264.0790, 106.4050], "max_corner": [299.4950, 142.5020], "elevation_min_m": -7.4833, "elevation_max_m": 34.4363},
+    "collider_building4": {"min_corner": [264.0150, 150.1270], "max_corner": [308.1320, 203.9880], "elevation_min_m": -7.3170, "elevation_max_m": 54.4358},
+    "collider_building5": {"min_corner": [211.0360, 21.8890], "max_corner": [247.0410, 64.8950], "elevation_min_m": -2.4433, "elevation_max_m": 42.4187},
+    "collider_building6": {"min_corner": [211.5750, 134.1740], "max_corner": [247.0690, 177.3120], "elevation_min_m": -7.6653, "elevation_max_m": 39.0638},
+    "collider_building7": {"min_corner": [159.7060, 10.1700], "max_corner": [192.8850, 58.7900], "elevation_min_m": -1.0428, "elevation_max_m": 46.7677},
+    "collider_building8": {"min_corner": [157.3010, 148.4630], "max_corner": [192.1820, 194.2300], "elevation_min_m": -8.1130, "elevation_max_m": 55.2104},
+    "collider_building9": {"min_corner": [100.5660, 0.5920], "max_corner": [141.5400, 61.1770], "elevation_min_m": -9.0877, "elevation_max_m": 50.5558},
+    "collider_building10": {"min_corner": [104.6590, 131.2290], "max_corner": [139.0790, 175.4160], "elevation_min_m": -8.4319, "elevation_max_m": 55.3562},
+    "collider_building11": {"min_corner": [47.2660, 7.0470], "max_corner": [83.0340, 50.8240], "elevation_min_m": -9.3799, "elevation_max_m": 33.9086},
+    "collider_building12": {"min_corner": [44.8540, 142.1010], "max_corner": [86.0920, 175.2910], "elevation_min_m": -8.8356, "elevation_max_m": 38.6896},
+    "collider_building13": {"min_corner": [-0.4800, -0.5630], "max_corner": [36.7950, 49.1650], "elevation_min_m": -9.9625, "elevation_max_m": 54.7452},
+    "collider_building14": {"min_corner": [0.5520, 116.5920], "max_corner": [33.3360, 166.5240], "elevation_min_m": -9.3661, "elevation_max_m": 54.2756},
+    "collider_building15": {"min_corner": [0.4490, 59.9130], "max_corner": [35.2960, 87.1650], "elevation_min_m": -9.8261, "elevation_max_m": 22.7319},
+    "collider_building16": {"min_corner": [53.3820, 99.0850], "max_corner": [85.6940, 127.8480], "elevation_min_m": 0.1002, "elevation_max_m": 17.2925},
+    "collider_building17": {"min_corner": [156.7110, 108.5900], "max_corner": [183.1710, 137.1220], "elevation_min_m": -0.3161, "elevation_max_m": 17.3676}
+  },
+  "excluded_search_regions": [
+    {
+      "id": "no_search_between_building9_connectors",
+      "label": "建筑9两连接体之间不可达区域",
+      "reason": "人工指定为不可达且无需检测，不计入任务覆盖率",
+      "shape": {
+        "type": "rectangle",
+        "min_corner": [136.83290100097656, 37.74770736694336],
+        "max_corner": [178.8872528076172, 40.15995788574219]
       }
     }
   ],

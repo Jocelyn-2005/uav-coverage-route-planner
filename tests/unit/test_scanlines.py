@@ -1,7 +1,7 @@
 import pytest
 from shapely.geometry import MultiPolygon, Polygon, box
 
-from coverage_planner.coverage import generate_capture_plan, generate_contour_capture_plan
+from coverage_planner.coverage import generate_capture_plan
 from coverage_planner.models.camera import CameraConfig
 
 
@@ -16,20 +16,6 @@ def camera() -> CameraConfig:
         "forward_overlap": 0.5,
         "side_overlap": 0.5,
     })
-
-
-def test_contour_plan_expands_from_center_and_is_deterministic() -> None:
-    geometry = box(0, 0, 80, 80).difference(box(30, 30, 50, 50))
-    kwargs = {
-        "camera": camera(), "flight_altitude_m": 10,
-        "ground_elevation_m": 0, "center_enu_m": (40, 40),
-    }
-    plan = generate_contour_capture_plan(geometry, **kwargs)
-    assert plan == generate_contour_capture_plan(geometry, **kwargs)
-    assert plan.capture_waypoints
-    layers = [waypoint.scan_line_index for waypoint in plan.capture_waypoints]
-    assert layers == sorted(layers)
-    assert all(geometry.covers(box(w.x, w.y, w.x, w.y)) for w in plan.capture_waypoints)
 
 
 def test_generates_deterministic_boustrophedon_waypoints() -> None:
