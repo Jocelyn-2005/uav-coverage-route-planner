@@ -24,6 +24,7 @@ class Waypoint:
     scan_line_index: int | None = None
     scan_segment_index: int | None = None
     camera_footprint_enu: Polygon | None = None
+    coverage_cell_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,3 +37,4 @@ class ScanSegment:
     end_enu_m: tuple[float, float]
     direction_yaw_deg: float
     capture_waypoint_ids: tuple[str, ...]
+    coverage_cell_index: int | None = None

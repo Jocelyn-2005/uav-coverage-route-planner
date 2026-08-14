@@ -40,6 +40,8 @@ def test_planner_exports_all_required_artifacts(tmp_path: Path) -> None:
     assert all({"heading_deg", "speed_mps"} <= waypoint.keys()
                for waypoint in flight["waypoints"])
     assert all(segment["speed_mps"] > 0 for segment in flight["route_segments"])
+    assert all("source_coverage_cell_index" in segment
+               for segment in flight["route_segments"])
     report=json.loads((tmp_path/"coverage_report.json").read_text())
     assert report["optimization_method"] == "layered_deterministic_heuristic"
     assert report["initial_candidate_metrics"]
@@ -59,8 +61,8 @@ def test_lawn_mower_returns_home_and_avoids_obstacles() -> None:
     result = CoveragePlanner().plan(
         semantic_map=semantic_map(), search_geometry=box(0, 0, 40, 30), camera=camera(),
         flight_altitude_m=10, start=(20, 15, 10), scan_pattern="lawn_mower")
-    assert {item.pattern for item in result.strategy_comparison} == {"scanline_clipped"}
-    assert result.scan_pattern == "scanline_clipped"
+    assert {item.pattern for item in result.strategy_comparison} == {"global_scanline"}
+    assert result.coverage_generation_method == "global_scanline"
     assert (result.planning_route[0].x, result.planning_route[0].y) == (20, 15)
     assert (result.planning_route[-1].x, result.planning_route[-1].y) == (20, 15)
     points = {waypoint.id: waypoint for waypoint in result.continuous_flight.waypoints}
@@ -78,6 +80,9 @@ def test_bcd_is_a_parallel_coverage_generator() -> None:
     assert result.scan_pattern == "bcd"
     assert result.coverage_requirement_met
     assert result.continuous_flight.lanes
+    assert any(segment.source_coverage_cell_index is not None
+               for segment in result.continuous_flight.route_segments
+               if segment.kind == "coverage_lane")
 
 
 def test_low_altitude_coverage_uses_only_reachable_captures() -> None:

@@ -9,7 +9,8 @@ boundary. It provides a directly runnable user-search input while preserving
 the semantic JSON as the source of truth.
 
 `planner_config.yaml` contains reproducible example camera, altitude, overlap,
-clearance, start, and scan-direction settings for the CLI and Web planner.
+clearance, start, Coverage Generation method, and sweep-direction settings for
+the CLI and Web planner.
 
 The original directory contains a 228 MB 3D GLB mesh. The mesh and all
 ROS/Gazebo/PX4 files are intentionally excluded from this pure-Python

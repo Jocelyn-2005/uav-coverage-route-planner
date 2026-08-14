@@ -39,5 +39,7 @@ def test_web_request_accepts_both_parallel_generators() -> None:
             "forward_overlap": .3, "side_overlap": .3,
         },
     }
+    assert PlanRequest.model_validate({
+        **base, "coverage_generation_method": "global_scanline"})
+    assert PlanRequest.model_validate({**base, "coverage_generation_method": "bcd"})
     assert PlanRequest.model_validate({**base, "scan_pattern": "scanline_clipped"})
-    assert PlanRequest.model_validate({**base, "scan_pattern": "bcd"})

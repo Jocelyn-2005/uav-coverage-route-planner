@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from itertools import pairwise
 
 from shapely import affinity, unary_union
-from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, box
+from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Polygon, box
 
 from coverage_planner.coverage.scanlines import CapturePlan, generate_capture_plan
 from coverage_planner.models.camera import CameraConfig
@@ -31,20 +31,32 @@ class BCDGenerator:
     ) -> CapturePlan:
         cells = decompose_boustrophedon_cells(
             geometry, scan_direction_deg=scan_direction_deg)
+        global_plan = generate_capture_plan(
+            geometry,
+            camera=camera,
+            flight_altitude_m=flight_altitude_m,
+            ground_elevation_m=ground_elevation_m,
+            scan_direction_deg=scan_direction_deg,
+        )
+        global_waypoints = {
+            waypoint.id: waypoint for waypoint in global_plan.capture_waypoints}
+        assigned: list[list[ScanSegment]] = [[] for _ in cells]
+        for segment in global_plan.scan_segments:
+            line = LineString([segment.start_enu_m, segment.end_enu_m])
+            cell_index = max(
+                range(len(cells)),
+                key=lambda index: (cells[index].intersection(line).length, -index),
+            )
+            assigned[cell_index].append(segment)
+
         waypoints: list[Waypoint] = []
         segments: list[ScanSegment] = []
-        lane_index = 0
-        for cell in cells:
-            local = generate_capture_plan(
-                cell,
-                camera=camera,
-                flight_altitude_m=flight_altitude_m,
-                ground_elevation_m=ground_elevation_m,
-                scan_direction_deg=scan_direction_deg,
-            )
-            by_id = {waypoint.id: waypoint for waypoint in local.capture_waypoints}
-            for local_segment in local.scan_segments:
-                lane_waypoints = [by_id[item] for item in local_segment.capture_waypoint_ids]
+        for cell_index, cell_segments in enumerate(assigned):
+            for source_segment in cell_segments:
+                lane_waypoints = [
+                    global_waypoints[item]
+                    for item in source_segment.capture_waypoint_ids
+                ]
                 ids: list[str] = []
                 for waypoint in lane_waypoints:
                     waypoint_id = f"wp_{len(waypoints) + 1:04d}"
@@ -53,18 +65,17 @@ class BCDGenerator:
                         waypoint,
                         id=waypoint_id,
                         sequence=len(waypoints) + 1,
-                        scan_line_index=lane_index,
-                        scan_segment_index=0,
+                        coverage_cell_index=cell_index,
                     ))
                 segments.append(ScanSegment(
-                    scan_line_index=lane_index,
-                    segment_index=0,
-                    start_enu_m=local_segment.start_enu_m,
-                    end_enu_m=local_segment.end_enu_m,
-                    direction_yaw_deg=local_segment.direction_yaw_deg,
+                    scan_line_index=source_segment.scan_line_index,
+                    segment_index=source_segment.segment_index,
+                    start_enu_m=source_segment.start_enu_m,
+                    end_enu_m=source_segment.end_enu_m,
+                    direction_yaw_deg=source_segment.direction_yaw_deg,
                     capture_waypoint_ids=tuple(ids),
+                    coverage_cell_index=cell_index,
                 ))
-                lane_index += 1
         return CapturePlan(scan_direction_deg % 360.0, tuple(segments), tuple(waypoints))
 
 

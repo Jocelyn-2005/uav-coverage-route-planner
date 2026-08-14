@@ -126,7 +126,7 @@ def test_scanline_generator_preserves_existing_geometry_baseline() -> None:
         "ground_elevation_m": 0,
         "scan_direction_deg": 90,
     }
-    assert generator.method == "scanline_clipped"
+    assert generator.method == "global_scanline"
     assert generator.generate(box(0, 0, 30, 30), **arguments) == generate_capture_plan(
         box(0, 0, 30, 30), **arguments)  # type: ignore[arg-type]
 
@@ -151,7 +151,16 @@ def test_bcd_generator_uses_same_capture_plan_contract() -> None:
         ground_elevation_m=0, scan_direction_deg=90)
     assert generator.method == "bcd"
     assert plan.capture_waypoints
-    assert len({segment.scan_line_index for segment in plan.scan_segments}) == len(
-        plan.scan_segments)
+    baseline = generate_capture_plan(
+        geometry, camera=camera(), flight_altitude_m=5,
+        ground_elevation_m=0, scan_direction_deg=90)
+    assert {
+        (segment.start_enu_m, segment.end_enu_m)
+        for segment in plan.scan_segments
+    } == {
+        (segment.start_enu_m, segment.end_enu_m)
+        for segment in baseline.scan_segments
+    }
+    assert all(segment.coverage_cell_index is not None for segment in plan.scan_segments)
     assert all(geometry.covers(Point(waypoint.x, waypoint.y))
                for waypoint in plan.capture_waypoints)

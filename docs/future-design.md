@@ -14,5 +14,6 @@
   始终提供连续视频，`detection_enabled` 仅控制检测结果是否计入任务。
 - 视觉识别属于规划器下游。除非通过独立版本化策略显式输入，否则识别模型不得
   改变确定性的几何覆盖判定。
-- 运筹优化后续应加入完整任务成本的扫描方向评分、2-opt/Or-opt，以及小规模
-  MILP/GTSP 精确解对照和 optimality gap 报告。
+- Coverage Generation 后续应加入更多 sweep direction 与 cell decomposition 对照；
+  Route Optimization 应加入 2-opt/Or-opt，以及小规模 MILP/GTSP 精确解和
+  optimality gap 报告。

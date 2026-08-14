@@ -1,8 +1,29 @@
-# 通用运筹优化视角下的地图全覆盖视频检测航点生成方法
+# 无人机全覆盖航道生成与路径优化器
 
-`coverage-search-planner` 是一个面向无人机园区连续视频检测任务的纯 Python 规划器。目标物是地面上静止的人和车辆；识别算法本身不在本仓库范围内。理想检测模型规定：目标完整进入相机有效视野一次，即认为可检测。规划采用 2.5D 几何：目标位于地面，相机在固定高度飞行，建筑高度和墙面会遮挡其后的地面。
+`coverage-search-planner`（展示名称：Coverage Generation and Route Optimization
+Planner）是一个面向无人机园区连续视频检测任务的纯 Python 规划器。目标物是地面上
+静止的人和车辆；识别算法本身不在本仓库范围内。理想检测模型规定：目标完整进入
+相机有效视野一次，即认为可检测。规划采用 2.5D 几何：目标位于地面，相机在固定
+高度飞行，建筑高度和墙面会遮挡其后的地面。
 
 项目使用本地 ENU 米制坐标，不依赖 ROS、PX4、Gazebo、MAVROS 或 YOLO。规划结果通过版本化 JSON/YAML 协议交给下层飞控适配器。
+
+项目的研究问题统一拆分为两个核心子问题：
+
+```text
+Coverage Generation（怎么保证扫全？）
+  ├─ Global Scanline：全局铺扫描线，再由边界与障碍裁剪
+  └─ Cellular Decomposition：先以 BCD 分解 cells，再生成 cell 内 lanes
+                         ↓
+              标准化 LaneRoutingProblem
+                         ↓
+Route Optimization（扫全以后怎么飞得更优？）
+  └─ lane ordering + lane orientation + obstacle-aware transition cost
+     Greedy → 2-opt / Or-opt → GTSP / MILP
+```
+
+Coverage Generation 必须先满足每个可搜索 patch 的全覆盖约束；Route Optimization
+只能在保持覆盖与安全可行的前提下降低空驶、转场、转弯和总任务代价。
 
 ## 快速验收
 
@@ -29,13 +50,14 @@ uv run uvicorn coverage_planner.web:app --host 127.0.0.1 --port 8000
 浏览器打开 <http://127.0.0.1:8000>。页面支持：
 
 - 分别绘制两架无人机互不重叠的责任区并调整各自起降点；
-- 配置往复式扫描方向（可留空自动优化）和建筑安全距离；
+- 在 Global Scanline 与 Cellular Decomposition（BCD）之间选择 Coverage Generation 方法；
+- 配置 sweep direction（可留空自动优化）和建筑安全距离；
 - 配置相机视场角、目标包络、画面边缘余量和视频分析采样率；
 - 配置覆盖、连接、避障速度和飞控途径点最大间距；
 - 查看带 ENU 米制刻度的地图、语义建筑、搜索网格、飞行路线和任务回放；
 - 下载连续飞行计划和覆盖报告，并生成用于地图分析的 GeoJSON 文件。
 
-验收建议：绘制两个不重叠责任区，点击“同时规划两架无人机”，确认出现两条独立闭合路线；有效检测视野不得覆盖建筑占地及被墙面遮挡的地面。回放仅表示两机同时启动，不进行时空碰撞规避。
+验收建议：绘制两个不重叠责任区，点击“生成并优化两架无人机航线”，确认出现两条独立闭合路线；有效检测视野不得覆盖建筑占地及被墙面遮挡的地面。回放仅表示两机同时启动，不进行时空碰撞规避。
 
 Web 红色外框表示航拍底图的有效有色内容边界，黄色虚线表示语义地图的可请求
 搜索边界。横轴为 ENU 东向、纵轴为 ENU 北向；每 10 米一个小刻度，每 50 米一个
@@ -67,6 +89,9 @@ results/example_run/visualization.png
 | 语义地图 | `semantic_map.json` | 地图边界、建筑矩形、建筑高度和类别 |
 | 用户搜索区域 | `search_area.geojson` 或 Web 手工绘制 | 每架无人机负责检测的 Polygon/MultiPolygon |
 | 规划配置 | `planner_config.yaml` | 起点、高度、相机、重叠率、安全距离、速度和采样参数 |
+
+配置字段 `coverage_generation_method` 选择 `global_scanline` 或 `bcd`；字段
+`scan_pattern` 仅作为旧版本兼容入口，不应再用于新实验配置。
 
 核心坐标约定：
 
@@ -100,7 +125,8 @@ results/example_run/visualization.png
 
 双机 Web 任务在根目录额外输出 `mission_manifest.json`，并在 `drone_1/`、
 `drone_2/` 下分别保存两架无人机的计划和验收文件。清单中的 `mission_status=ready`
-仅表示两架飞机各自在人工责任区内达到覆盖阈值，不代表责任区并集覆盖整张地图，
+仅表示两架飞机各自在人工责任区内的每个可搜索 patch 均达到 `99.99%` 数值覆盖
+阈值，不代表责任区并集覆盖整张地图，
 也不代表已经完成双机时空避碰。
 
 覆盖报告区分两个阶段：`initial_candidate_metrics` 是补漏和连续视野复核前的初始
@@ -128,13 +154,17 @@ results/example_run/visualization.png
 
 ## 方法概览
 
-相机在高度 `h` 下形成地面视锥投影。规划器按目标包络和画面边缘余量收缩有效视野，再扣除建筑占地与墙体遮挡阴影。随后生成往复式平行扫描线，进行补漏、航线方向/顺序选择、可见图避障连接和连续视频视野覆盖复核，最后按最大间距细分飞控途径点。
+第一层 Coverage Generation 根据地图、相机 footprint、overlap 和安全距离生成满足
+全覆盖约束的 lanes。当前并列实现 Global Scanline 与 Cellular Decomposition（BCD）。
+第二层 Route Optimization 在 lanes 固定后联合选择 lane ordering 和 lane orientation，
+使用障碍感知 transition cost 连接相邻任务。连续视频视野复核通过后，路线才会细分
+成下层飞控途径点。
 
 运筹优化视角下，主要决策包括扫描方向、航线集合、每条航线的执行方向、访问顺序、连接路径、检测结果计入状态和速度。目标是在满足覆盖、安全、闭合任务和飞控跟踪约束的前提下，综合最小化总航程、非作业航程、转弯代价和未覆盖惩罚。
 
 - [问题定义与数学模型](docs/optimization-model.md)
 - [几何与优化算法设计](docs/algorithm-design.md)
-- [覆盖结构与组合优化 Benchmark](docs/benchmark-design.md)
+- [Coverage Generation × Route Optimization Benchmark](docs/benchmark-design.md)
 - [下层飞控接口](docs/flight-controller-interface.md)
 - [后续设计边界](docs/future-design.md)
 
@@ -142,8 +172,9 @@ results/example_run/visualization.png
 
 当前版本是确定性的分层启发式求解器，不宣称获得全局最优解。它已实现双机人工责任区、固定高度正射覆盖、目标完整入镜约束、建筑墙体遮挡、往复式扫描、建筑高度相关避障、可见图最短路、连续视频覆盖评估和飞控途径点导出。暂不处理运动目标、双机时空碰撞、地形跟随、斜视相机、任意建筑网格以及动力学平滑。
 
-项目并列提供两种基础覆盖结构生成方法：`ScanlineClippedGenerator` 先生成全局平行
+项目并列提供两种 Coverage Generation 方法：`GlobalScanlineGenerator` 先生成全局平行
 扫描线，再由搜索边界、建筑和安全区裁剪成 lane；`BCDGenerator` 先在扫描拓扑发生
 分裂或合并的位置构造单调 cell，再在各 cell 内生成往复式 lane。二者不存在升级或
-替代关系，均转换为统一的 `LaneRoutingProblem`，共用 Greedy 排序、避障连接和飞控
+替代关系，均转换为统一的 `LaneRoutingProblem`。Route Optimization 当前使用 Greedy
+完成 lane ordering 与 orientation，并共用避障连接和飞控
 导出。2-opt、Or-opt 和小规模精确 GTSP/MILP 仍是后续优化基线。

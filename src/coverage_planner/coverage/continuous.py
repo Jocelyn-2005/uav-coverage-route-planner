@@ -79,7 +79,9 @@ def build_continuous_flight_plan(
             heading_deg=heading, speed_mps=speed, length_m=length,
             detection_enabled=kind == "coverage_lane",
             source_scan_line_index=end.scan_line_index if kind == "coverage_lane" else None,
-            source_scan_segment_index=end.scan_segment_index if kind == "coverage_lane" else None))
+            source_scan_segment_index=end.scan_segment_index if kind == "coverage_lane" else None,
+            source_coverage_cell_index=(
+                end.coverage_cell_index if kind == "coverage_lane" else None)))
         if kind != "coverage_lane":
             continue
         temporal_spacing_m = speed / video_analysis_rate_hz

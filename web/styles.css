@@ -21,7 +21,9 @@ svg{width:100%;height:100%}
 .building{fill:#525b63;fill-opacity:.55;stroke:#20262b;stroke-width:.35}
 .patch{fill:#4f9d69;fill-opacity:.12;stroke:#fff;stroke-width:.12}
 .patch.uncovered{fill:#d95d5d;fill-opacity:.65}
-.route{fill:none;stroke:#1864ab;stroke-width:.55}
+.lane-route{stroke-width:.75;stroke-linecap:round}
+.transition-route{stroke-width:.6;stroke-dasharray:2 1.2;stroke-linecap:round;opacity:.9}
+.coverage-cell{pointer-events:none}
 .waypoint{fill:#111;stroke:#fff;stroke-width:.2}
 .transit{fill:#f08c00}
 .map-frame{fill:none;stroke:#c92a2a;stroke-width:1.1;pointer-events:none}

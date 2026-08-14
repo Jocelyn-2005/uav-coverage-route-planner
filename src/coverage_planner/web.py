@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from shapely.geometry import LineString, box, mapping, shape
 
+from coverage_planner.coverage.generators import decompose_boustrophedon_cells
 from coverage_planner.geometry.calibration import MapCalibration
 from coverage_planner.io import load_semantic_map
 from coverage_planner.io.semantic_map import building_safety_elevations, building_safety_geometry
@@ -37,7 +38,8 @@ class PlanRequest(BaseModel):
     vertical_clearance_m: float = Field(ge=0)
     scan_direction_deg: float | None = None
     camera: CameraConfig
-    scan_pattern: Literal["scanline_clipped", "bcd"] = "scanline_clipped"
+    coverage_generation_method: Literal["global_scanline", "bcd"] = "global_scanline"
+    scan_pattern: Literal["scanline_clipped", "bcd"] | None = None
     video_analysis_rate_hz: float = Field(default=2.0, gt=0)
     control_point_spacing_m: float = Field(default=10.0, gt=0)
     coverage_speed_mps: float = Field(default=5.0, gt=0)
@@ -60,7 +62,8 @@ class DualPlanRequest(BaseModel):
     vertical_clearance_m: float = Field(ge=0)
     scan_direction_deg: float | None = None
     camera: CameraConfig
-    scan_pattern: Literal["scanline_clipped", "bcd"] = "scanline_clipped"
+    coverage_generation_method: Literal["global_scanline", "bcd"] = "global_scanline"
+    scan_pattern: Literal["scanline_clipped", "bcd"] | None = None
     video_analysis_rate_hz: float = Field(default=2.0, gt=0)
     control_point_spacing_m: float = Field(default=10.0, gt=0)
     coverage_speed_mps: float = Field(default=5.0, gt=0)
@@ -69,7 +72,16 @@ class DualPlanRequest(BaseModel):
     return_speed_mps: float = Field(default=4.0, gt=0)
 
 
-app = FastAPI(title="Coverage Search Planner")
+def _request_generation_method(
+    request: PlanRequest | DualPlanRequest,
+) -> Literal["global_scanline", "bcd"]:
+    """Resolve the canonical field while accepting the legacy Web API key."""
+    if request.scan_pattern is not None:
+        return "bcd" if request.scan_pattern == "bcd" else "global_scanline"
+    return request.coverage_generation_method
+
+
+app = FastAPI(title="UAV Coverage Generation and Route Optimization Planner")
 
 
 @app.get("/api/map")
@@ -126,7 +138,7 @@ def plan(request: PlanRequest) -> dict[str, Any]:
                 horizontal_clearance_m=request.horizontal_clearance_m,
                 vertical_clearance_m=request.vertical_clearance_m,
                 scan_direction_deg=request.scan_direction_deg,
-                scan_pattern=request.scan_pattern,
+                coverage_generation_method=_request_generation_method(request),
                 video_analysis_rate_hz=request.video_analysis_rate_hz,
                 control_point_spacing_m=request.control_point_spacing_m,
                 coverage_speed_mps=request.coverage_speed_mps,
@@ -160,7 +172,7 @@ def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
             "horizontal_clearance_m": request.horizontal_clearance_m,
             "vertical_clearance_m": request.vertical_clearance_m,
             "scan_direction_deg": request.scan_direction_deg,
-            "scan_pattern": request.scan_pattern,
+            "coverage_generation_method": _request_generation_method(request),
             "video_analysis_rate_hz": request.video_analysis_rate_hz,
             "control_point_spacing_m": request.control_point_spacing_m,
             "coverage_speed_mps": request.coverage_speed_mps,
@@ -198,6 +210,11 @@ def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
                            if route is not None and route_length else 0.0),
     } for sample_id, geometry in result.visibility_samples),
         key=lambda sample: (sample["route_progress"], sample["id"]))
+    coverage_cells = (
+        decompose_boustrophedon_cells(
+            result.effective_area.geometry,
+            scan_direction_deg=result.scan_direction_deg,
+        ) if result.coverage_generation_method == "bcd" else ())
     return {
             "coverage_ratio": sum(p.area_m2*p.coverage_ratio for p in result.patches)/result.effective_area.geometry.area,
             "minimum_required_coverage_ratio": result.minimum_required_coverage_ratio,
@@ -208,6 +225,8 @@ def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
             "uncovered_patch_count": len(result.unreachable_patch_ids),
             "warnings": list(result.warnings),
             "scan_pattern": result.scan_pattern,
+            "coverage_generation_method": result.coverage_generation_method,
+            "route_optimization_method": "greedy_obstacle_distance",
             "scan_direction_deg": result.scan_direction_deg,
             "path_length_m": result.path_length_m,
             "lane_count": len(result.continuous_flight.lanes),
@@ -231,6 +250,7 @@ def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
             "visible_detection_area": mapping(result.visible_detection_geometry),
             "visibility_samples": visibility_samples,
             "obstacles": mapping(result.obstacles.geometry),
+            "coverage_cells": [mapping(cell) for cell in coverage_cells],
             "patches": [{"id":p.id,"geometry":mapping(p.geometry),"covered":p.covered,"ratio":p.coverage_ratio} for p in result.patches],
             "flight_waypoints": [{
                 "id": w.id, "x": w.x, "y": w.y, "z": w.z,
@@ -243,6 +263,9 @@ def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
                 "end_waypoint_id": segment.end_waypoint_id,
                 "heading_deg": segment.heading_deg, "speed_mps": segment.speed_mps,
                 "detection_enabled": segment.detection_enabled,
+                "source_scan_line_index": segment.source_scan_line_index,
+                "source_scan_segment_index": segment.source_scan_segment_index,
+                "source_coverage_cell_index": segment.source_coverage_cell_index,
             } for segment in result.continuous_flight.route_segments],
         }
 

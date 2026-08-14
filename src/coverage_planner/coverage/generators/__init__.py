@@ -2,11 +2,13 @@
 
 from coverage_planner.coverage.generators.base import CoverageStructureGenerator
 from coverage_planner.coverage.generators.bcd import BCDGenerator, decompose_boustrophedon_cells
+from coverage_planner.coverage.generators.global_scanline import GlobalScanlineGenerator
 from coverage_planner.coverage.generators.scanline_clipped import ScanlineClippedGenerator
 
 __all__ = [
     "BCDGenerator",
     "CoverageStructureGenerator",
+    "GlobalScanlineGenerator",
     "ScanlineClippedGenerator",
     "decompose_boustrophedon_cells",
 ]

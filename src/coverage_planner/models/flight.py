@@ -38,6 +38,7 @@ class RouteSegment:
     detection_enabled: bool
     source_scan_line_index: int | None = None
     source_scan_segment_index: int | None = None
+    source_coverage_cell_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,7 +1,7 @@
 [project]
 name = "coverage-search-planner"
 version = "0.1.0"
-description = "Pure-Python UAV coverage search and path planning toolkit"
+description = "UAV coverage generation and route optimization planner"
 readme = "README.md"
 requires-python = ">=3.12"
 

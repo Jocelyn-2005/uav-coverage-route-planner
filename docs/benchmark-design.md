@@ -1,16 +1,16 @@
-# 覆盖结构与组合优化 Benchmark 设计
+# Coverage Generation × Route Optimization Benchmark
 
 ## 1. 研究维度
 
-Benchmark 将几何生成方法与组合优化算法正交比较：
+Benchmark 将 Coverage Generation 方法与 Route Optimization 算法正交比较：
 
-| 几何生成方法 | 原始顺序 | Greedy | 2-opt/Or-opt | 精确 GTSP/MILP |
+| Coverage Generation | 原始顺序 | Greedy | 2-opt/Or-opt | 精确 GTSP/MILP |
 |---|---:|---:|---:|---:|
-| 全局扫描线裁剪 | 可生成 | 已实现 | 待实现 | 小实例待实现 |
-| BCD + cell 内往复 | 可生成 | 已实现 | 待实现 | 小实例待实现 |
+| Global Scanline | 可生成 | 已实现 | 待实现 | 小实例待实现 |
+| Cellular Decomposition（BCD） | 可生成 | 已实现 | 待实现 | 小实例待实现 |
 
-两种几何方法是平行的基础航点生成思路，不构成“基线—改进算法”关系。几何方法
-负责产生标准化 lane jobs；组合优化器只能读取统一的
+两种 Coverage Generation 方法是平行的基础航点生成思路，不构成“基线—改进算法”
+关系。它们负责产生标准化 lane jobs；Route Optimization 只能读取统一的
 `LaneRoutingProblem` 和障碍转场成本矩阵，不能修改覆盖几何。这样才能保证算法
 比较使用相同的 lane、起点、安全净空和成本定义。
 
@@ -48,7 +48,7 @@ $$
 
 ## 4. 当前重构状态
 
-- `ScanlineClippedGenerator` 实现全局扫描线裁剪路线；
+- `GlobalScanlineGenerator` 实现 Global Scanline 路线；
 - `BCDGenerator` 实现基于扫描拓扑事件的 cell 分解与 cell 内往复路线；
 - `LaneJob` 表示具有一个或两个执行方向的覆盖任务；
 - `LaneRoutingProblem` 是所有启发式和精确求解器的统一输入；
@@ -57,5 +57,9 @@ $$
 - 两个生成器都已接入同一个 Greedy、避障连接、连续视野评估和飞控导出链路；
 - 2-opt、Or-opt 与精确求解器尚未实现。
 
-Web 验收界面的“基础覆盖生成方法”可在两条路线之间切换。比较时必须保持责任区、
+Web 验收界面的“Coverage Generation”可在两条路线之间切换。比较时必须保持责任区、
 飞行高度、相机参数、扫描方向、安全距离和后续优化器完全一致。
+
+可视化也必须区分几何层和路由层：实线表示生成器产生的初始 lane，虚线表示优化器
+添加的 lane 间转场；BCD 额外显示 cell 边界。不能把相互交叉的转场线统计成重复
+coverage lane。所有 BCD cell 共用全局扫描线格架，避免 cell 局部相位造成过密 lane。

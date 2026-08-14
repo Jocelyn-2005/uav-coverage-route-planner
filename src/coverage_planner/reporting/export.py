@@ -78,6 +78,8 @@ def _summary(result: PlanResult) -> dict[str, object]:
       "minimum_required_coverage_ratio":result.minimum_required_coverage_ratio,
       "coverage_requirement_met":result.coverage_requirement_met,
       "scan_pattern":result.scan_pattern,
+      "coverage_generation_method":result.coverage_generation_method,
+      "route_optimization_method":"greedy_obstacle_distance",
       "optimization_method":"layered_deterministic_heuristic",
       "initial_candidate_metrics":[{
           "pattern": item.pattern, "coverage_ratio": item.coverage_ratio,
@@ -136,6 +138,9 @@ def _flight_mission(result: PlanResult) -> dict[str, object]:
             "end_waypoint_id": segment.end_waypoint_id,
             "heading_deg": segment.heading_deg, "speed_mps": segment.speed_mps,
             "length_m": segment.length_m, "detection_enabled": segment.detection_enabled,
+            "source_scan_line_index": segment.source_scan_line_index,
+            "source_scan_segment_index": segment.source_scan_segment_index,
+            "source_coverage_cell_index": segment.source_coverage_cell_index,
         } for segment in flight.route_segments],
         "waypoints": [{
             "id": waypoint.id, "sequence": waypoint.sequence,

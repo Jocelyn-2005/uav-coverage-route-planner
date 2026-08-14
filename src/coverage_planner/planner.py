@@ -20,7 +20,7 @@ from coverage_planner.coverage import (
     prepare_lane_route,
     supplement_uncovered_patches,
 )
-from coverage_planner.coverage.generators import BCDGenerator, ScanlineClippedGenerator
+from coverage_planner.coverage.generators import BCDGenerator, GlobalScanlineGenerator
 from coverage_planner.coverage.generators.base import CoverageStructureGenerator
 from coverage_planner.coverage.scanlines import CapturePlan
 from coverage_planner.geometry import build_effective_search_area
@@ -78,7 +78,12 @@ class PlanResult:
     minimum_obstacle_clearance_m: float | None
     minimum_required_coverage_ratio: float
     coverage_requirement_met: bool
-    scan_pattern: str = "scanline_clipped"
+    scan_pattern: str = "global_scanline"
+
+    @property
+    def coverage_generation_method(self) -> str:
+        """Canonical name for the geometry method; scan_pattern is legacy output."""
+        return self.scan_pattern
     strategy_comparison: tuple[StrategyMetrics, ...] = ()
 
     @property
@@ -93,9 +98,10 @@ class CoveragePlanner:
         horizontal_clearance_m: float = 3.0, vertical_clearance_m: float = 2.0,
         allow_overflight_above_buildings: bool = True, scan_direction_deg: float | None = None,
         patch_config: PatchGridConfig | None = None, ground_elevation_m: float = 0.0,
-        minimum_coverage_ratio: float = 0.95,
+        minimum_coverage_ratio: float = 0.9999,
         return_to_start: bool = True,
-        scan_pattern: Literal["scanline_clipped", "bcd", "lawn_mower"] = "scanline_clipped",
+        coverage_generation_method: Literal["global_scanline", "bcd"] | None = None,
+        scan_pattern: Literal["scanline_clipped", "bcd", "lawn_mower"] | None = None,
         video_analysis_rate_hz: float = 2.0,
         control_point_spacing_m: float = 10.0,
         coverage_speed_mps: float = 5.0,
@@ -112,8 +118,14 @@ class CoveragePlanner:
             vertical_clearance_m=vertical_clearance_m,
             horizontal_clearance_m=horizontal_clearance_m,
             allow_overflight_above_buildings=allow_overflight_above_buildings)
-        canonical_pattern = (
-            "scanline_clipped" if scan_pattern == "lawn_mower" else scan_pattern)
+        legacy_method = (
+            "global_scanline" if scan_pattern in {"lawn_mower", "scanline_clipped"}
+            else scan_pattern)
+        if (coverage_generation_method is not None and legacy_method is not None
+                and coverage_generation_method != legacy_method):
+            raise ValueError(
+                "coverage_generation_method conflicts with legacy scan_pattern")
+        canonical_pattern = coverage_generation_method or legacy_method or "global_scanline"
         patterns = (canonical_pattern,)
         candidates = tuple(self._run_pattern(
             pattern=pattern, effective_geometry=effective.geometry, patches=patches,
@@ -147,16 +159,21 @@ class CoveragePlanner:
         evaluated = evaluate_patch_coverage(
             patches, continuous_footprints, minimum_coverage_ratio=minimum_coverage_ratio
         )
-        for _ in range(2):
-            covered_area = sum(p.area_m2 * p.coverage_ratio for p in evaluated)
-            if (not effective.geometry.area or
-                    covered_area / effective.geometry.area >= minimum_coverage_ratio):
+        attempted_supplement_points: set[tuple[str, float, float]] = set()
+        for _ in range(6):
+            unresolved = [patch for patch in evaluated if not patch.covered]
+            if not unresolved:
                 break
             supplemental_waypoints = list(capture_plan.capture_waypoints)
-            for patch in evaluated:
-                if patch.covered:
+            covered_geometry = (
+                unary_union(tuple(continuous_footprints.values()))
+                if continuous_footprints else Polygon())
+            added = False
+            for patch in unresolved:
+                uncovered_geometry = patch.geometry.difference(covered_geometry)
+                if uncovered_geometry.is_empty:
                     continue
-                point = patch.geometry.representative_point()
+                point = uncovered_geometry.representative_point()
                 if obstacles.geometry.covers(point):
                     boundary = nearest_points(point, obstacles.geometry.boundary)[1]
                     dx, dy = boundary.x - point.x, boundary.y - point.y
@@ -166,6 +183,10 @@ class CoveragePlanner:
                     point = Point(
                         boundary.x + dx / length * 1e-5,
                         boundary.y + dy / length * 1e-5)
+                attempt_key = (patch.id, round(point.x, 6), round(point.y, 6))
+                if attempt_key in attempted_supplement_points:
+                    continue
+                attempted_supplement_points.add(attempt_key)
                 sample_id = f"wp_{len(supplemental_waypoints) + 1:04d}"
                 supplemental_waypoints.append(Waypoint(
                     id=sample_id, sequence=len(supplemental_waypoints) + 1,
@@ -177,6 +198,9 @@ class CoveragePlanner:
                         flight_altitude_m=flight_altitude_m,
                         ground_elevation_m=ground_elevation_m,
                         yaw_deg=capture_plan.scan_direction_deg)))
+                added = True
+            if not added:
+                break
             capture_plan = replace(
                 capture_plan, capture_waypoints=tuple(supplemental_waypoints))
             route_points, post_skipped = prepare_lane_route(
@@ -205,7 +229,9 @@ class CoveragePlanner:
         covered_area_m2 = sum(p.area_m2 * p.coverage_ratio for p in evaluated)
         achieved_coverage_ratio = (
             covered_area_m2 / effective_area_m2 if effective_area_m2 else 0.0)
-        coverage_requirement_met = achieved_coverage_ratio >= minimum_coverage_ratio
+        coverage_requirement_met = (
+            not unreachable
+            and achieved_coverage_ratio >= minimum_coverage_ratio)
         warnings = []
         if skipped_point_ids:
             if coverage_requirement_met:
@@ -219,9 +245,14 @@ class CoveragePlanner:
                     "unreachable at the fixed altitude; refer to unreachable_patch_ids "
                     "for ground that remains below the coverage requirement")
         if not coverage_requirement_met:
+            unresolved_area_m2 = sum(
+                patch.area_m2 * (1.0 - patch.coverage_ratio)
+                for patch in evaluated if not patch.covered)
             warnings.append(
-                f"coverage ratio {achieved_coverage_ratio:.4f} is below required "
-                f"{minimum_coverage_ratio:.4f}; mission is not ready for execution")
+                f"{len(unreachable)} search patches remain below the required "
+                f"{minimum_coverage_ratio:.4f} coverage, with approximately "
+                f"{unresolved_area_m2:.2f} m^2 unresolved; mission is not ready "
+                "for execution")
         comparison = tuple(item.metrics for item in sorted(candidates, key=lambda item: item.pattern))
         visible_union = (
             unary_union(tuple(continuous_footprints.values()))
@@ -257,8 +288,8 @@ class CoveragePlanner:
         return_to_start: bool,
     ) -> PatternCandidate:
         generator: CoverageStructureGenerator
-        if pattern == "scanline_clipped":
-            generator = ScanlineClippedGenerator()
+        if pattern == "global_scanline":
+            generator = GlobalScanlineGenerator()
         elif pattern == "bcd":
             generator = BCDGenerator()
         else:

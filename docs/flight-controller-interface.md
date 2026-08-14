@@ -87,6 +87,9 @@ detection_enabled=true 时运行/采纳检测结果
 
 覆盖报告将规划阶段与最终验收分开记录：`initial_candidate_metrics` 是补漏和连续
 复核前的候选方案指标，`final_solution_metrics` 是最终可执行航线指标。
+`coverage_generation_method` 记录 Coverage Generation 方法，当前为
+`global_scanline` 或 `bcd`；`route_optimization_method` 记录固定 lanes 之后采用的
+Route Optimization 方法。旧字段 `scan_pattern` 仅为向后兼容保留。
 `unreachable_candidate_point_ids` 仅表示初始候选点无法安全到达，不等于漏检；
 最终仍低于覆盖要求的地面只由 `unreachable_patch_ids` 表示。下层系统判断任务是否
 可以执行时，应读取 `mission_status` 和最终覆盖指标，不能依据候选点数量自行否决。

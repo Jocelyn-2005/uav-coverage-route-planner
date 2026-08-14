@@ -10,7 +10,7 @@ from math import hypot
 from coverage_planner.camera import ground_footprint_polygon
 from coverage_planner.coverage.evaluation import evaluate_patch_coverage
 from coverage_planner.coverage.generators.base import CoverageStructureGenerator
-from coverage_planner.coverage.generators.scanline_clipped import ScanlineClippedGenerator
+from coverage_planner.coverage.generators.global_scanline import GlobalScanlineGenerator
 from coverage_planner.coverage.scanlines import CapturePlan
 from coverage_planner.models.camera import CameraConfig
 from coverage_planner.models.patch import Patch
@@ -41,7 +41,7 @@ def optimize_scan_direction(
 ) -> tuple[CapturePlan, tuple[DirectionScore, ...]]:
     if not candidate_angles_deg:
         raise ValueError("candidate_angles_deg cannot be empty")
-    selected_generator: CoverageStructureGenerator = generator or ScanlineClippedGenerator()
+    selected_generator: CoverageStructureGenerator = generator or GlobalScanlineGenerator()
     candidates = []
     for angle in candidate_angles_deg:
         plan = selected_generator.generate(
@@ -57,7 +57,7 @@ def optimize_scan_direction(
 def supplement_uncovered_patches(
     plan: CapturePlan, patches: Sequence[Patch], *, camera: CameraConfig,
     flight_altitude_m: float, ground_elevation_m: float,
-    minimum_coverage_ratio: float = 0.95, maximum_passes: int = 2,
+    minimum_coverage_ratio: float = 0.9999, maximum_passes: int = 2,
 ) -> tuple[CapturePlan, tuple[Patch, ...]]:
     waypoints = list(plan.capture_waypoints)
     evaluated: tuple[Patch, ...] = tuple(patches)
