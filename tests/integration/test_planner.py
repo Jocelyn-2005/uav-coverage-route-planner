@@ -34,9 +34,9 @@ def test_planner_exports_all_required_artifacts(tmp_path: Path) -> None:
     )
     assert not result.planning_route[-1].capture
     flight=json.loads((tmp_path/"flight_plan.json").read_text())
-    assert flight["schema_version"] == "2.0"
-    assert flight["capture"]["mode"] == "continuous"
-    assert flight["capture"]["frequency_hz"] == 2
+    assert flight["schema_version"] == "3.0"
+    assert flight["video_detection"]["mode"] == "continuous_video_stream"
+    assert flight["video_detection"]["analysis_rate_hz"] == 2
     assert all({"heading_deg", "speed_mps"} <= waypoint.keys()
                for waypoint in flight["waypoints"])
     assert all(segment["speed_mps"] > 0 for segment in flight["route_segments"])

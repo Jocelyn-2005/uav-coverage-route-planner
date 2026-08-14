@@ -12,6 +12,7 @@ section{padding:8px 0 15px;border-bottom:1px solid #e2e7ea}
 h2{font-size:13px;margin:5px 0 10px;text-transform:uppercase;color:#65717c}
 label{display:block;font-size:12px;margin:8px 0;color:#39434c}
 label div{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+label div.three{grid-template-columns:1fr 1fr 1fr}
 input[type=number]{width:100%;padding:7px;border:1px solid #bcc6ce;border-radius:3px;margin-top:4px}
 input[type=checkbox]{vertical-align:middle}
 input[type=range]{width:100%}
@@ -28,6 +29,9 @@ svg{width:100%;height:100%}
 .drone{fill:#ffb000;stroke:#111;stroke-width:.45}
 .captured-footprint{fill:#b9f6ca;fill-opacity:.18;stroke:#73d69a;stroke-opacity:.38;stroke-width:.14}
 .travelled{fill:none;stroke:#ffb000;stroke-width:1.1}
+.draw-region{width:100%;margin:3px 0;padding:7px}.draw-region.drone-2{background:#e67700}
+.hint{color:#65717c}.valid-coverage{pointer-events:none}
+#draw-tip{position:absolute;top:12px;left:12px;background:#17202a;color:#fff;padding:8px 12px;display:none}
 #error{position:absolute;bottom:12px;left:12px;background:#b42318;color:#fff;padding:8px;display:none}
 #exports a{display:block;color:#1864ab;font-size:12px;margin:5px 0}
 p{font-size:12px;line-height:1.5}

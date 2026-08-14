@@ -2,19 +2,19 @@
 
 ## 1. 交付文件
 
-下层飞控适配器应读取规划输出目录中的 `flight_plan.json`。`flight_plan.yaml` 内容等价，适合人工审阅。
+单机适配器读取各无人机目录下的 `flight_plan.json`；`flight_plan.yaml` 内容等价。双机任务根目录另有 `mission_manifest.json`，说明两机同时启动、责任归属和各自文件路径。当前协议为 `schema_version = "3.0"`，坐标系为 ENU，单位为米。
 
-协议当前版本为 `schema_version = "2.0"`，坐标系为 ENU，单位为米。
+两架无人机的计划在任务开始前都已计算完成，随后独立执行。本版本不提供双机时空碰撞规避；绕障路线可以短暂离开责任区。
 
 ## 2. 顶层结构
 
 ```json
 {
-  "schema_version": "2.0",
+  "schema_version": "3.0",
   "coordinate_frame": "ENU",
   "units": "meters",
   "map_id": "yungu2030_local_origin",
-  "capture": {},
+  "video_detection": {},
   "lanes": [],
   "route_segments": [],
   "waypoints": [],
@@ -22,119 +22,63 @@
 }
 ```
 
-## 3. 摄影配置
+## 3. 连续视频检测配置
 
 ```json
 {
-  "mode": "continuous",
-  "frequency_hz": 2.0,
+  "mode": "continuous_video_stream",
+  "analysis_rate_hz": 2.0,
   "control_point_spacing_m": 10.0,
   "forward_overlap": 0.3,
-  "lane_overlap": 0.3
+  "lane_overlap": 0.3,
+  "target_envelope": {"width_m": 2.5, "length_m": 6.0, "height_m": 2.5},
+  "image_boundary_margin_ratio": 0.05,
+  "building_wall_occlusion": true
 }
 ```
 
-- `mode`：当前固定为连续摄影；
-- `frequency_hz`：启用摄影的航段内固定触发频率；
-- `control_point_spacing_m`：规划输出允许的最大相邻途径点间距；
-- `forward_overlap`、`lane_overlap`：规划使用的航向/旁向重叠率。
+相机在任务中输出连续视频，不存在定频快门。`analysis_rate_hz` 是规划器近似连续视野扫掠时的数值采样率，也可作为下游视频检测的建议推理帧率。`target_envelope` 与画面边缘余量用于保证目标整体入镜。
 
-## 4. 飞控途径点
+## 4. 飞控途径点与航段
 
-```json
-{
-  "id": "fp_0001",
-  "sequence": 1,
-  "x": 153.4,
-  "y": 67.2,
-  "z": 30.0,
-  "heading_deg": 90.0,
-  "speed_mps": 4.0
-}
-```
+途径点包含 `id/sequence/x/y/z/heading_deg/speed_mps`。`sequence` 从 1 连续递增；0° 指北、90° 指东；最后一点速度为 0。
 
-- `sequence` 从 1 开始连续递增；
-- `x/y/z` 为局部 ENU 目标位置；
-- `heading_deg` 为该点之后航段的目标航向，0° 指北、90° 指东；
-- `speed_mps` 为该点之后航段的目标速度；
-- 最后一个点速度为 0。
-
-## 5. 航段
-
-```json
-{
-  "id": "segment_0001",
-  "sequence": 1,
-  "kind": "connector",
-  "start_waypoint_id": "fp_0001",
-  "end_waypoint_id": "fp_0002",
-  "heading_deg": 90.0,
-  "speed_mps": 4.0,
-  "length_m": 8.7,
-  "capture_enabled": false
-}
-```
-
-`kind` 枚举值：
+航段的 `kind` 可为：
 
 | 值 | 含义 |
 |---|---|
-| `coverage_lane` | 主覆盖作业航段 |
-| `connector` | 覆盖航线之间的连接段 |
+| `coverage_lane` | 本责任区的主检测航段 |
+| `connector` | 检测航线间的连接段 |
 | `obstacle_avoidance` | 建筑安全缓冲绕行段 |
 | `return_home` | 返回起降点航段 |
 
-`capture_enabled` 是相机控制的唯一权威字段。它通常在覆盖航段为 `true`，但当连接或返航能够补充未覆盖地面时，也可能为 `true`。
+`detection_enabled` 表示该航段的视频分析结果是否计入任务覆盖。它不是拍照指令，也不能替代实时安全判断。
 
-## 6. 推荐执行状态机
+## 5. 推荐执行流程
 
 ```text
-加载并校验协议
-      ↓
-飞往 waypoints[0]
-      ↓
-按 sequence 读取 route_segment
-      ↓
-设置目标速度和航向
-      ↓
-capture_enabled ? 开启固定频率触发 : 停止触发
-      ↓
-跟踪 end_waypoint_id 对应的 ENU 点
-      ↓
-到达容差内 → 下一航段
-      ↓
-最后一点悬停/降落并关闭相机
+加载并校验双机清单及两份计划
+          ↓
+确认两机均已就绪，同一任务时刻启动
+          ↓
+每架飞机独立按 sequence 跟踪 route_segment
+          ↓
+设置速度和航向，持续输出视频流
+          ↓
+detection_enabled=true 时运行/采纳检测结果
+          ↓
+到达 end_waypoint_id 容差内，进入下一航段
+          ↓
+最后一点悬停或降落
 ```
 
-适配器必须在任务开始前校验：
+任务开始前应校验协议版本、ENU 原点、ID/序号连续性、航段连通性，以及高度和速度是否在载具能力范围内。由于本规划器没有时空解冲突，实际运行前还必须由上层系统确认两条航线满足现场安全要求。
 
-1. schema 版本、坐标系和单位受支持；
-2. waypoint `sequence` 连续且 ID 唯一；
-3. segment `sequence` 连续；
-4. 每个 segment 的首尾 ID 存在；
-5. 相邻 segment 连通；
-6. 高度、速度和拍摄频率在载具能力范围内；
-7. 本地 ENU 原点与规划地图一致。
+## 6. 适配器边界
 
-## 7. 飞控不应自行推断的内容
-
-- 不应根据航点是否为转折点决定是否拍照；
-- 不应根据 `kind` 代替 `capture_enabled`；
-- 不应自动修改 ENU 原点、轴方向或单位；
-- 不应在未重新进行安全校验时跳过中间途径点；
-- 不应把规划 footprint 当作实时定位真值。
-
-## 8. 容错建议
-
-- 对每个途径点设置水平、垂直到达容差和超时；
-- 超出走廊或定位质量不足时暂停摄影并进入安全策略；
-- 相机触发应记录时间戳、ENU/全球坐标、航向和任务航段 ID；
-- 中断恢复时从安全的 segment 边界恢复，而不是仅凭最近 waypoint ID；
-- 实际载具若有最小转弯半径，应在适配层或上游轨迹平滑模块中明确处理，不能假设当前折线天然满足动力学约束。
-
-## 9. 其他输出的用途
-
-- `coverage_report.json`：任务验收和实验指标，不用于实时控制；
-- `route.geojson`：GIS 显示；
-- `patches.geojson`：覆盖缺口分析；
-- `visualization.png`：人工快速检查；
+- 不要把途径点理解为单帧检测或拍照触发点；
+- 不要根据航点是否为转折点推断检测状态；
+- 不要自动改变 ENU 原点、轴方向或单位；
+- 不要在未重新安全校验时跳过途径点；
+- 不要把规划视野当作实时定位或视觉识别真值；
+- 超出飞行走廊或定位质量不足时，应进入载具自身的安全策略。

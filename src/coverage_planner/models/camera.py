@@ -21,6 +21,10 @@ class CameraConfig(BaseModel):
     fixed_yaw_deg: float | None = None
     forward_overlap: float = Field(ge=0.0, lt=1.0)
     side_overlap: float = Field(ge=0.0, lt=1.0)
+    target_width_m: float = Field(default=0.0, ge=0.0)
+    target_length_m: float = Field(default=0.0, ge=0.0)
+    target_height_m: float = Field(default=0.0, ge=0.0)
+    image_boundary_margin_ratio: float = Field(default=0.0, ge=0.0, lt=0.5)
     minimum_ground_sampling_distance_cm_per_px: float | None = Field(default=None, gt=0.0)
 
     @model_validator(mode="after")

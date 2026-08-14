@@ -10,7 +10,7 @@ SegmentKind = Literal["coverage_lane", "connector", "obstacle_avoidance", "retur
 
 @dataclass(frozen=True, slots=True)
 class FlightWaypoint:
-    """A route control point; image capture is continuous between these points."""
+    """A route control point; video detection is continuous between these points."""
 
     id: str
     sequence: int
@@ -33,7 +33,7 @@ class RouteSegment:
     heading_deg: float
     speed_mps: float
     length_m: float
-    capture_enabled: bool
+    detection_enabled: bool
     source_scan_line_index: int | None = None
     source_scan_segment_index: int | None = None
 
@@ -52,13 +52,17 @@ class CoverageLane:
 
 @dataclass(frozen=True, slots=True)
 class ContinuousFlightPlan:
-    """Continuous capture route and its explicit flight commands."""
+    """Continuous video-detection route and its explicit flight commands."""
 
-    capture_frequency_hz: float
+    video_analysis_rate_hz: float
     control_point_spacing_m: float
     lane_overlap: float
     forward_overlap: float
+    target_width_m: float
+    target_length_m: float
+    target_height_m: float
+    image_boundary_margin_ratio: float
     waypoints: tuple[FlightWaypoint, ...]
     route_segments: tuple[RouteSegment, ...]
     lanes: tuple[CoverageLane, ...]
-    sampled_footprint_count: int
+    visibility_sample_count: int

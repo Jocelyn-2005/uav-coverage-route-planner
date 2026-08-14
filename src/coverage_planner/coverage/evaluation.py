@@ -7,6 +7,7 @@ from typing import Literal
 
 from shapely import unary_union
 from shapely.geometry import Point, Polygon
+from shapely.geometry.base import BaseGeometry
 
 from coverage_planner.models.patch import Patch
 
@@ -19,7 +20,7 @@ class CoverageEvaluationError(ValueError):
 
 def evaluate_patch_coverage(
     patches: Sequence[Patch],
-    camera_footprints: Mapping[str, Polygon],
+    camera_footprints: Mapping[str, BaseGeometry],
     *,
     mode: CoverageMode = "area_ratio",
     minimum_coverage_ratio: float = 0.95,

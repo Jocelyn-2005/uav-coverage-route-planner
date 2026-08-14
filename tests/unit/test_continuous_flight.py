@@ -19,7 +19,7 @@ def test_continuous_sampling_uses_speed_and_frequency() -> None:
     )
     plan, footprints = build_continuous_flight_plan(
         route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
-        capture_frequency_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
         obstacle_speed_mps=2.5, return_speed_mps=4)
     assert len(footprints) == 9
     assert plan.route_segments[0].kind == "coverage_lane"
@@ -36,7 +36,7 @@ def test_heading_follows_flight_direction_and_connector_speed() -> None:
     )
     plan, _ = build_continuous_flight_plan(
         route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
-        capture_frequency_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
         obstacle_speed_mps=2.5, return_speed_mps=4)
     assert plan.route_segments[0].kind == "connector"
     assert plan.route_segments[0].heading_deg == 90
@@ -49,7 +49,7 @@ def test_dense_samples_are_replaced_by_uniform_control_points() -> None:
         for index, y in enumerate((0, 5, 10, 15, 20), 1))
     plan, _ = build_continuous_flight_plan(
         route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
-        capture_frequency_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
         obstacle_speed_mps=2.5, return_speed_mps=4)
     assert [(waypoint.x, waypoint.y) for waypoint in plan.waypoints] == [
         (0, 0), (0, 10), (0, 20)]
@@ -65,7 +65,7 @@ def test_control_points_respect_configured_maximum_spacing() -> None:
     )
     plan, _ = build_continuous_flight_plan(
         route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
-        capture_frequency_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
         obstacle_speed_mps=2.5, return_speed_mps=4, control_point_spacing_m=6)
     assert len(plan.waypoints) == 6
     assert all(segment.length_m == 5 for segment in plan.route_segments)
@@ -79,7 +79,7 @@ def test_home_departure_is_a_connector() -> None:
     )
     plan, _ = build_continuous_flight_plan(
         route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
-        capture_frequency_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
         obstacle_speed_mps=2.5, return_speed_mps=4)
     assert plan.route_segments[0].kind == "connector"
 
@@ -91,9 +91,9 @@ def test_connector_does_not_capture_images() -> None:
     )
     plan, footprints = build_continuous_flight_plan(
         route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
-        capture_frequency_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
         obstacle_speed_mps=2.5, return_speed_mps=4)
-    assert not plan.route_segments[0].capture_enabled
+    assert not plan.route_segments[0].detection_enabled
     assert len(footprints) == 2
 
 
@@ -104,9 +104,9 @@ def test_coverage_lane_explicitly_enables_capture() -> None:
     )
     plan, _ = build_continuous_flight_plan(
         route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
-        capture_frequency_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
         obstacle_speed_mps=2.5, return_speed_mps=4)
-    assert plan.route_segments[0].capture_enabled
+    assert plan.route_segments[0].detection_enabled
 
 
 def test_connector_captures_only_when_it_contributes_to_requested_region() -> None:
@@ -116,8 +116,8 @@ def test_connector_captures_only_when_it_contributes_to_requested_region() -> No
     )
     plan, footprints = build_continuous_flight_plan(
         route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
-        capture_frequency_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
         obstacle_speed_mps=2.5, return_speed_mps=4,
         capture_region=box(18, -1, 22, 1))
-    assert plan.route_segments[0].capture_enabled
+    assert plan.route_segments[0].detection_enabled
     assert any("opportunistic" in identifier for identifier in footprints)

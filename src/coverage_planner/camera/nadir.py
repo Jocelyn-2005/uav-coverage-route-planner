@@ -32,13 +32,18 @@ def ground_footprint_dimensions(
     ground_elevation_m: float,
 ) -> GroundFootprintDimensions:
     """Calculate nadir footprint dimensions at a horizontal ground plane."""
-    height_m = flight_altitude_m - ground_elevation_m
+    height_m = flight_altitude_m - ground_elevation_m - camera.target_height_m
     if height_m <= 0.0:
         raise CameraGeometryError(
-            "flight_altitude_m must be greater than ground_elevation_m for a nadir footprint"
+            "flight_altitude_m must be greater than ground_elevation_m plus target height"
         )
-    width_m = 2.0 * height_m * tan(radians(camera.horizontal_fov_deg) / 2.0)
-    length_m = 2.0 * height_m * tan(radians(camera.vertical_fov_deg) / 2.0)
+    margin_scale = 1.0 - 2.0 * camera.image_boundary_margin_ratio
+    raw_width_m = 2.0 * height_m * tan(radians(camera.horizontal_fov_deg) / 2.0) * margin_scale
+    raw_length_m = 2.0 * height_m * tan(radians(camera.vertical_fov_deg) / 2.0) * margin_scale
+    width_m = raw_width_m - camera.target_width_m
+    length_m = raw_length_m - camera.target_length_m
+    if width_m <= 0 or length_m <= 0:
+        raise CameraGeometryError("target envelope is too large for the configured camera view")
     return GroundFootprintDimensions(
         width_m=width_m,
         length_m=length_m,

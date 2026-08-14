@@ -12,6 +12,7 @@ matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 from shapely.geometry import LineString, mapping
 
+from coverage_planner.multi_planner import MultiDronePlan
 from coverage_planner.planner import PlanResult
 
 
@@ -30,6 +31,30 @@ def export_plan(result: PlanResult, output_dir: str | Path) -> Path:
     _json(output/"route.geojson", {"type":"Feature","geometry":mapping(route),"properties":summary})
     _json(output/"coverage_report.json", summary | {"warnings":list(result.warnings)})
     _visualization(result, output/"visualization.png")
+    return output
+
+
+def export_multi_plan(plan: MultiDronePlan, output_dir: str | Path) -> Path:
+    """Write two independent flight plans plus one coordination-free manifest."""
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    drones = []
+    for drone in plan.drones:
+        drone_dir = export_plan(drone.result, output / drone.drone_id)
+        drones.append({
+            "drone_id": drone.drone_id,
+            "responsibility_geometry": mapping(drone.assigned_geometry),
+            "responsibility_area_m2": drone.result.effective_area.geometry.area,
+            "path_length_m": drone.result.path_length_m,
+            "coverage_ratio": _summary(drone.result)["coverage_ratio"],
+            "flight_plan": str((drone_dir / "flight_plan.json").relative_to(output)),
+            "coverage_report": str((drone_dir / "coverage_report.json").relative_to(output)),
+        })
+    _json(output / "mission_manifest.json", {
+        "schema_version": "1.0", "mission_type": "independent_two_drone_detection",
+        "temporal_collision_avoidance": False, "simultaneous_start": True,
+        "drones": drones,
+    })
     return output
 
 def _summary(result: PlanResult) -> dict[str, object]:
@@ -60,19 +85,27 @@ def _summary(result: PlanResult) -> dict[str, object]:
       "obstacle_avoidance_length_m":segment_lengths.get("obstacle_avoidance", 0.0),
       "return_home_length_m":segment_lengths.get("return_home", 0.0),
       "noncoverage_distance_ratio":noncoverage/result.path_length_m if result.path_length_m else 0.0,
-      "sampled_image_count":result.continuous_flight.sampled_footprint_count,
+      "visibility_sample_count":result.continuous_flight.visibility_sample_count,
       "unreachable_patch_ids":list(result.unreachable_patch_ids)}
 
 
 def _flight_mission(result: PlanResult) -> dict[str, object]:
     flight = result.continuous_flight
     return {
-        "schema_version": "2.0", "coordinate_frame": "ENU", "units": "meters",
+        "schema_version": "3.0", "coordinate_frame": "ENU", "units": "meters",
         "map_id": result.semantic_map.world_name,
-        "capture": {"mode": "continuous", "frequency_hz": flight.capture_frequency_hz,
-                    "control_point_spacing_m": flight.control_point_spacing_m,
-                    "forward_overlap": flight.forward_overlap,
-                    "lane_overlap": flight.lane_overlap},
+        "video_detection": {
+            "mode": "continuous_video_stream",
+            "analysis_rate_hz": flight.video_analysis_rate_hz,
+            "control_point_spacing_m": flight.control_point_spacing_m,
+            "forward_overlap": flight.forward_overlap,
+            "lane_overlap": flight.lane_overlap,
+            "target_envelope": {"width_m": flight.target_width_m,
+                                "length_m": flight.target_length_m,
+                                "height_m": flight.target_height_m},
+            "image_boundary_margin_ratio": flight.image_boundary_margin_ratio,
+            "building_wall_occlusion": True,
+        },
         "lanes": [{
             "id": lane.id, "sequence": lane.sequence, "heading_deg": lane.heading_deg,
             "speed_mps": lane.speed_mps, "route_segment_ids": list(lane.route_segment_ids),
@@ -83,7 +116,7 @@ def _flight_mission(result: PlanResult) -> dict[str, object]:
             "start_waypoint_id": segment.start_waypoint_id,
             "end_waypoint_id": segment.end_waypoint_id,
             "heading_deg": segment.heading_deg, "speed_mps": segment.speed_mps,
-            "length_m": segment.length_m, "capture_enabled": segment.capture_enabled,
+            "length_m": segment.length_m, "detection_enabled": segment.detection_enabled,
         } for segment in flight.route_segments],
         "waypoints": [{
             "id": waypoint.id, "sequence": waypoint.sequence,

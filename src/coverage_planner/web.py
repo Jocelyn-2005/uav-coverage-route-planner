@@ -14,8 +14,9 @@ from shapely.geometry import mapping, shape
 from coverage_planner.geometry.calibration import MapCalibration
 from coverage_planner.io import load_semantic_map
 from coverage_planner.models import CameraConfig
-from coverage_planner.planner import CoveragePlanner
-from coverage_planner.reporting import export_plan
+from coverage_planner.multi_planner import DroneAssignment, TwoDroneCoveragePlanner
+from coverage_planner.planner import CoveragePlanner, PlanResult
+from coverage_planner.reporting import export_multi_plan, export_plan
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "examples/yungu2030"
@@ -34,7 +35,30 @@ class PlanRequest(BaseModel):
     scan_direction_deg: float | None = None
     camera: CameraConfig
     scan_pattern: Literal["lawn_mower", "contour_outward", "auto"] = "auto"
-    capture_frequency_hz: float = Field(default=2.0, gt=0)
+    video_analysis_rate_hz: float = Field(default=2.0, gt=0)
+    control_point_spacing_m: float = Field(default=10.0, gt=0)
+    coverage_speed_mps: float = Field(default=5.0, gt=0)
+    connector_speed_mps: float = Field(default=4.0, gt=0)
+    obstacle_speed_mps: float = Field(default=2.5, gt=0)
+    return_speed_mps: float = Field(default=4.0, gt=0)
+
+
+class DroneRequest(BaseModel):
+    drone_id: str = Field(min_length=1)
+    search_geometry: dict[str, Any]
+    home_x_m: float
+    home_y_m: float
+
+
+class DualPlanRequest(BaseModel):
+    drones: tuple[DroneRequest, DroneRequest]
+    flight_altitude_m: float = Field(gt=0)
+    horizontal_clearance_m: float = Field(ge=0)
+    vertical_clearance_m: float = Field(ge=0)
+    scan_direction_deg: float | None = None
+    camera: CameraConfig
+    scan_pattern: Literal["lawn_mower", "contour_outward", "auto"] = "auto"
+    video_analysis_rate_hz: float = Field(default=2.0, gt=0)
     control_point_spacing_m: float = Field(default=10.0, gt=0)
     coverage_speed_mps: float = Field(default=5.0, gt=0)
     connector_speed_mps: float = Field(default=4.0, gt=0)
@@ -87,7 +111,7 @@ def plan(request: PlanRequest) -> dict[str, Any]:
             vertical_clearance_m=request.vertical_clearance_m,
             scan_direction_deg=request.scan_direction_deg,
             scan_pattern=request.scan_pattern,
-            capture_frequency_hz=request.capture_frequency_hz,
+            video_analysis_rate_hz=request.video_analysis_rate_hz,
             control_point_spacing_m=request.control_point_spacing_m,
             coverage_speed_mps=request.coverage_speed_mps,
             connector_speed_mps=request.connector_speed_mps,
@@ -95,22 +119,74 @@ def plan(request: PlanRequest) -> dict[str, Any]:
             return_speed_mps=request.return_speed_mps,
         )
         export_plan(result, RESULTS)
-        return {"summary": {
+        return {"summary": _web_result(
+            result, [request.home_x_m, request.home_y_m, request.flight_altitude_m])}
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/plan-dual")
+def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
+    try:
+        semantic = load_semantic_map(EXAMPLE / "semantic_map.json")
+        assignments = (
+            DroneAssignment(
+                request.drones[0].drone_id, shape(request.drones[0].search_geometry),
+                (request.drones[0].home_x_m, request.drones[0].home_y_m,
+                 request.flight_altitude_m)),
+            DroneAssignment(
+                request.drones[1].drone_id, shape(request.drones[1].search_geometry),
+                (request.drones[1].home_x_m, request.drones[1].home_y_m,
+                 request.flight_altitude_m)),
+        )
+        options = {
+            "flight_altitude_m": request.flight_altitude_m,
+            "horizontal_clearance_m": request.horizontal_clearance_m,
+            "vertical_clearance_m": request.vertical_clearance_m,
+            "scan_direction_deg": request.scan_direction_deg,
+            "scan_pattern": request.scan_pattern,
+            "video_analysis_rate_hz": request.video_analysis_rate_hz,
+            "control_point_spacing_m": request.control_point_spacing_m,
+            "coverage_speed_mps": request.coverage_speed_mps,
+            "connector_speed_mps": request.connector_speed_mps,
+            "obstacle_speed_mps": request.obstacle_speed_mps,
+            "return_speed_mps": request.return_speed_mps,
+        }
+        result = TwoDroneCoveragePlanner().plan(
+            assignments=assignments, semantic_map=semantic,
+            camera=request.camera, planner_options=options)
+        export_multi_plan(result, RESULTS)
+        response = []
+        for drone in result.drones:
+            first = drone.result.continuous_flight.waypoints[0]
+            response.append({
+                "drone_id": drone.drone_id,
+                "responsibility_area": mapping(drone.assigned_geometry),
+                "summary": _web_result(drone.result, [first.x, first.y, first.z]),
+            })
+        return {"drones": response}
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
+    return {
             "coverage_ratio": sum(p.area_m2*p.coverage_ratio for p in result.patches)/result.effective_area.geometry.area,
             "unreachable": list(result.unreachable_patch_ids),
             "scan_pattern": result.scan_pattern,
             "path_length_m": result.path_length_m,
             "lane_count": len(result.continuous_flight.lanes),
             "flight_waypoint_count": len(result.continuous_flight.waypoints),
-            "sampled_image_count": result.continuous_flight.sampled_footprint_count,
+            "visibility_sample_count": result.continuous_flight.visibility_sample_count,
             "strategy_comparison": [{
                 "pattern": item.pattern, "coverage_ratio": item.coverage_ratio,
                 "planning_point_count": item.planning_point_count,
                 "path_length_m": item.path_length_m,
                 "unreachable_count": item.unreachable_patch_count,
-            } for item in result.strategy_comparison]},
-            "home": [request.home_x_m, request.home_y_m, request.flight_altitude_m],
+            } for item in result.strategy_comparison],
+            "home": home,
             "effective_area": mapping(result.effective_area.geometry),
+            "visible_detection_area": mapping(result.visible_detection_geometry),
             "obstacles": mapping(result.obstacles.geometry),
             "patches": [{"id":p.id,"geometry":mapping(p.geometry),"covered":p.covered,"ratio":p.coverage_ratio} for p in result.patches],
             "flight_waypoints": [{
@@ -122,20 +198,29 @@ def plan(request: PlanRequest) -> dict[str, Any]:
                 "start_waypoint_id": segment.start_waypoint_id,
                 "end_waypoint_id": segment.end_waypoint_id,
                 "heading_deg": segment.heading_deg, "speed_mps": segment.speed_mps,
-                "capture_enabled": segment.capture_enabled,
+                "detection_enabled": segment.detection_enabled,
             } for segment in result.continuous_flight.route_segments],
         }
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/export/{filename}")
 def download(filename: str) -> FileResponse:
-    allowed={"flight_plan.json","flight_plan.yaml",
+    allowed={"flight_plan.json","flight_plan.yaml","mission_manifest.json",
              "patches.geojson","route.geojson","coverage_report.json","visualization.png"}
     if filename not in allowed or not (RESULTS/filename).is_file():
         raise HTTPException(status_code=404, detail="export not found")
     return FileResponse(RESULTS/filename, filename=filename)
+
+
+@app.get("/api/export/{drone_id}/{filename}")
+def download_drone(drone_id: str, filename: str) -> FileResponse:
+    allowed_drones = {"drone_1", "drone_2"}
+    allowed = {"flight_plan.json", "flight_plan.yaml", "patches.geojson", "route.geojson",
+               "coverage_report.json", "visualization.png"}
+    path = RESULTS / drone_id / filename
+    if drone_id not in allowed_drones or filename not in allowed or not path.is_file():
+        raise HTTPException(status_code=404, detail="export not found")
+    return FileResponse(path, filename=filename)
 
 
 app.mount("/", StaticFiles(directory=WEB, html=True), name="web")

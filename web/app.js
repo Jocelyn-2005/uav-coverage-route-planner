@@ -1,245 +1,31 @@
-const svg = document.querySelector('#canvas');
-const planButton = document.querySelector('#plan');
-const summaryBox = document.querySelector('#summary');
-const exportBox = document.querySelector('#exports');
-const replayButton = document.querySelector('#replay');
-const ns = 'http://www.w3.org/2000/svg';
-let mapData;
-let planData;
-let animationFrame;
-let animationState = null;
-
-const strategyNames = {
-  auto: '自动比较',
-  contour_outward: '由内向外轮廓搜索',
-  lawn_mower: '往复式覆盖搜索',
-};
-const exportNames = {
-  'flight_plan.json': '连续飞行计划（JSON）',
-  'flight_plan.yaml': '连续飞行计划（YAML）',
-  'patches.geojson': '覆盖网格（GeoJSON）',
-  'route.geojson': '飞行路线（GeoJSON）',
-  'coverage_report.json': '覆盖报告（JSON）',
-  'visualization.png': '规划结果图（PNG）',
-};
-
-const input = id => document.querySelector(`#${id}`);
-const layer = name => document.querySelector(`[data-layer=${name}]`).checked;
-
-function element(tag, attributes, className) {
-  const node = document.createElementNS(ns, tag);
-  Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, value));
-  if (className) node.setAttribute('class', className);
-  return node;
-}
-
-function polygonPoints(coordinates) {
-  return coordinates.map(point => `${point[0]},${-point[1]}`).join(' ');
-}
-
-function rings(geometry) {
-  if (geometry.type === 'Polygon') return [geometry.coordinates[0]];
-  if (geometry.type === 'MultiPolygon') return geometry.coordinates.map(polygon => polygon[0]);
-  return [];
-}
-
-function draw() {
-  svg.innerHTML = '';
-  if (!mapData) return;
-  if (layer('background')) {
-    const [minX, minY, maxX, maxY] = mapData.background.bounds;
-    svg.append(element('image', {
-      href: `${mapData.background.url}?v=3`, x: minX, y: -maxY,
-      width: maxX - minX, height: maxY - minY, preserveAspectRatio: 'none',
-    }));
-  }
-  svg.append(element('polygon', {
-    points: polygonPoints(mapData.search_area.coordinates[0]),
-    style: 'fill:none;stroke:#c92a2a;stroke-width:.8px',
-  }, 'boundary'));
-  if (layer('buildings')) mapData.buildings.forEach(building => {
-    const [minX, minY, maxX, maxY] = building.bounds;
-    const rectangle = element('rect', {
-      x: minX, y: -maxY, width: maxX - minX, height: maxY - minY,
-    }, 'building');
-    const title = element('title', {});
-    title.textContent = `${building.id} · 高度 ${building.height_m.toFixed(1)} 米`;
-    rectangle.append(title);
-    svg.append(rectangle);
-  });
-  if (planData && layer('patches')) planData.patches.forEach(patch =>
-    rings(patch.geometry).forEach(ring => svg.append(element('polygon', {
-      points: polygonPoints(ring),
-    }, `patch ${patch.covered ? '' : 'uncovered'}`))));
-  const flightRoute = planData ? planData.flight_waypoints : [];
-  if (planData && layer('route')) svg.append(element('polyline', {
-    points: flightRoute.map(waypoint => `${waypoint.x},${-waypoint.y}`).join(' '),
-  }, 'route'));
-  if (planData && layer('waypoints')) flightRoute.forEach(waypoint => {
-    const circle = element('circle', {
-      cx: waypoint.x, cy: -waypoint.y, r: .9,
-    }, 'waypoint');
-    const title = element('title', {});
-    title.textContent = `${waypoint.id} · ENU ${waypoint.x.toFixed(2)}, ${waypoint.y.toFixed(2)}, ${waypoint.z.toFixed(2)} · 航向 ${waypoint.heading_deg?.toFixed(1) ?? waypoint.yaw_deg.toFixed(1)}° · 速度 ${waypoint.speed_mps?.toFixed(1) ?? '-'} 米/秒`;
-    circle.append(title);
-    svg.append(circle);
-  });
-  const home = [+input('home-x').value, +input('home-y').value];
-  if (Number.isFinite(home[0]) && Number.isFinite(home[1])) {
-    svg.append(element('circle', { cx: home[0], cy: -home[1], r: 2 }, 'home'));
-    const title = element('title', {}); title.textContent = `起降点 · ENU ${home[0]}, ${home[1]}`;
-    svg.lastChild.append(title);
-  }
-  drawAnimationState();
-}
-
-function drawAnimationState() {
-  if (!animationState || !planData) return;
-  animationState.footprints.forEach(ring => svg.append(element('polygon', {
-    points: polygonPoints(ring),
-  }, 'captured-footprint')));
-  if (animationState.currentFootprint) svg.append(element('polygon', {
-    points: polygonPoints(animationState.currentFootprint),
-  }, 'captured-footprint'));
-  if (animationState.travelled.length > 1) svg.append(element('polyline', {
-    points: animationState.travelled.map(point => `${point[0]},${-point[1]}`).join(' '),
-  }, 'travelled'));
-  if (animationState.position) svg.append(element('circle', {
-    cx: animationState.position[0], cy: -animationState.position[1], r: 1.7,
-  }, 'drone'));
-}
-
-function cameraFootprint(position, headingDeg) {
-  const altitude = +input('alt').value;
-  const width = 2 * altitude * Math.tan(+input('hfov').value * Math.PI / 360);
-  const length = 2 * altitude * Math.tan(+input('vfov').value * Math.PI / 360);
-  const yaw = headingDeg * Math.PI / 180;
-  const forward = [Math.sin(yaw), Math.cos(yaw)];
-  const right = [Math.cos(yaw), -Math.sin(yaw)];
-  return [[1,1],[1,-1],[-1,-1],[-1,1]].map(([f,r]) => [
-    position[0] + f * length / 2 * forward[0] + r * width / 2 * right[0],
-    position[1] + f * length / 2 * forward[1] + r * width / 2 * right[1],
-  ]);
-}
-
-function replayMission() {
-  if (!planData || planData.flight_waypoints.length < 2) return;
-  cancelAnimationFrame(animationFrame);
-  const route = planData.flight_waypoints;
-  animationState = { segment: 0, progress: 0, footprints: [], travelled: [[route[0].x, route[0].y]],
-    position: [route[0].x, route[0].y], currentFootprint: null, lastCaptureDistance: 0, lastTime: null };
-  replayButton.disabled = true;
-  function step(time) {
-    if (animationState.lastTime === null) animationState.lastTime = time;
-    const elapsed = Math.min(50, time - animationState.lastTime);
-    animationState.lastTime = time;
-    const from = route[animationState.segment];
-    const to = route[animationState.segment + 1];
-    const distance = Math.hypot(to.x - from.x, to.y - from.y);
-    const metresPerSecond = 10 + Number(input('speed').value) * 18;
-    animationState.progress += distance === 0 ? 1 : elapsed / 1000 * metresPerSecond / distance;
-    const ratio = Math.min(1, animationState.progress);
-    animationState.position = [from.x + (to.x - from.x) * ratio, from.y + (to.y - from.y) * ratio];
-    const captureEnabled = planData.route_segments[animationState.segment]?.capture_enabled ?? true;
-    animationState.currentFootprint = captureEnabled
-      ? cameraFootprint(animationState.position, from.heading_deg) : null;
-    const travelledOnSegment = distance * ratio;
-    const captureSpacing = Math.max(.5, from.speed_mps / +input('frequency').value);
-    if (captureEnabled && travelledOnSegment - animationState.lastCaptureDistance >= captureSpacing) {
-      animationState.footprints.push(animationState.currentFootprint);
-      animationState.lastCaptureDistance = travelledOnSegment;
-    }
-    if (ratio === 1) {
-      animationState.travelled.push([to.x, to.y]);
-      animationState.segment += 1;
-      animationState.progress = 0;
-      animationState.lastCaptureDistance = 0;
-      if (animationState.segment >= route.length - 1) {
-        draw(); replayButton.disabled = false; return;
-      }
-    }
-    draw();
-    animationFrame = requestAnimationFrame(step);
-  }
-  draw();
-  animationFrame = requestAnimationFrame(step);
-}
-
-function showError(error) {
-  const box = input('error');
-  box.textContent = error instanceof Error ? error.message : String(error);
-  box.style.display = 'block';
-}
-
-document.querySelectorAll('[data-layer]').forEach(control => { control.onchange = draw; });
-['home-x', 'home-y'].forEach(id => { input(id).oninput = draw; });
-replayButton.onclick = replayMission;
-svg.onmousemove = event => {
-  let point = svg.createSVGPoint();
-  point.x = event.clientX; point.y = event.clientY;
-  point = point.matrixTransform(svg.getScreenCTM().inverse());
-  input('coords').textContent = `ENU 东向 ${point.x.toFixed(1)}，北向 ${(-point.y).toFixed(1)}`;
-};
-
-planButton.onclick = async () => {
-  input('error').style.display = 'none';
-  planButton.disabled = true;
-  planButton.textContent = '正在规划…';
-  summaryBox.innerHTML = '<h2>规划结果</h2><p>正在计算覆盖路线…</p>';
-  try {
-    const altitude = +input('alt').value;
-    const payload = {
-      search_geometry: mapData.search_area,
-      flight_altitude_m: altitude,
-      home_x_m: +input('home-x').value,
-      home_y_m: +input('home-y').value,
-      horizontal_clearance_m: +input('hc').value,
-      vertical_clearance_m: +input('vc').value,
-      scan_direction_deg: +input('angle').value,
-      scan_pattern: input('pattern').value,
-      capture_frequency_hz: +input('frequency').value,
-      control_point_spacing_m: +input('control-spacing').value,
-      coverage_speed_mps: +input('lane-speed').value,
-      connector_speed_mps: +input('connector-speed').value,
-      obstacle_speed_mps: +input('obstacle-speed').value,
-      return_speed_mps: +input('connector-speed').value,
-      camera: { image_width_px: 1920, image_height_px: 1080,
-        horizontal_fov_deg: +input('hfov').value, vertical_fov_deg: +input('vfov').value,
-        pitch_deg: -90, yaw_mode: 'follow_path', forward_overlap: +input('fo').value,
-        side_overlap: +input('so').value },
-    };
-    const response = await fetch('/api/plan', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(`规划参数或搜索区域无效（状态码 ${response.status}）`);
-    planData = body;
-    animationState = null;
-    const result = body.summary;
-    const comparison = result.strategy_comparison.map(item => `${strategyNames[item.pattern] ?? item.pattern}：覆盖率 ${(item.coverage_ratio * 100).toFixed(2)}%，航程 ${item.path_length_m.toFixed(0)} 米`).join('<br>');
-    summaryBox.innerHTML = `<h2>规划结果</h2><p>采用策略：${strategyNames[result.scan_pattern] ?? result.scan_pattern}<br>覆盖率：${(result.coverage_ratio * 100).toFixed(2)}%<br>总航程：${result.path_length_m.toFixed(0)} 米<br>覆盖航线：${result.lane_count} 条<br>飞行控制点：${result.flight_waypoint_count} 个<br>预计采图：${result.sampled_image_count} 张<br>未覆盖网格：${result.unreachable.length} 个</p><p><strong>策略比较</strong><br>${comparison}</p>`;
-    exportBox.innerHTML = ['flight_plan.json','flight_plan.yaml','patches.geojson','route.geojson','coverage_report.json','visualization.png'].map(file => `<a href="/api/export/${file}">${exportNames[file]}</a>`).join('');
-    draw();
-    replayButton.disabled = false;
-    replayMission();
-  } catch (error) {
-    summaryBox.innerHTML = '<h2>规划结果</h2><p>规划失败，请查看错误提示。</p>';
-    showError(error instanceof Error && error.message.startsWith('规划')
-      ? error : new Error('无法连接规划服务，请确认服务正在运行。'));
-  } finally {
-    planButton.disabled = false;
-    planButton.textContent = '开始规划';
-  }
-};
-
-async function load() {
-  try {
-    const response = await fetch('/api/map');
-    if (!response.ok) throw new Error(`地图加载失败（状态码 ${response.status}）`);
-    mapData = await response.json();
-    draw();
-  } catch (error) {
-    showError(new Error('地图加载失败，请刷新页面或确认服务正在运行。'));
-  }
-}
-load();
+const svg=document.querySelector('#canvas'), ns='http://www.w3.org/2000/svg';
+const input=id=>document.querySelector(`#${id}`), layer=name=>document.querySelector(`[data-layer=${name}]`).checked;
+const colors=['#1864ab','#e67700']; let mapData,planData,drawTarget=null,firstCorner=null,animationFrame=null;
+let regions=[null,null], animation=null;
+const strategyNames={auto:'自动比较',contour_outward:'由内向外轮廓搜索',lawn_mower:'往复式覆盖搜索'};
+function el(tag,attrs={},cls){const n=document.createElementNS(ns,tag);Object.entries(attrs).forEach(([k,v])=>n.setAttribute(k,v));if(cls)n.setAttribute('class',cls);return n}
+const points=ring=>ring.map(p=>`${p[0]},${-p[1]}`).join(' ');
+function rings(g){if(!g)return[];if(g.type==='Polygon')return g.coordinates.map((r,i)=>({ring:r,hole:i>0}));if(g.type==='MultiPolygon')return g.coordinates.flatMap(p=>p.map((r,i)=>({ring:r,hole:i>0})));return[]}
+function addGeometry(g,cls,style=''){rings(g).filter(x=>!x.hole).forEach(x=>svg.append(el('polygon',{points:points(x.ring),style},cls)))}
+function defaultRegions(){const [a,b,c,d]=mapData.background.bounds,m=(a+c)/2;regions=[rectGeo(a,b,m,d),rectGeo(m,b,c,d)]}
+function rectGeo(x1,y1,x2,y2){const a=Math.min(x1,x2),b=Math.min(y1,y2),c=Math.max(x1,x2),d=Math.max(y1,y2);return{type:'Polygon',coordinates:[[[a,b],[c,b],[c,d],[a,d],[a,b]]]}}
+function draw(){svg.innerHTML='';if(!mapData)return;const [a,b,c,d]=mapData.background.bounds;if(layer('background'))svg.append(el('image',{href:`${mapData.background.url}?v=3`,x:a,y:-d,width:c-a,height:d-b,preserveAspectRatio:'none'}));
+ addGeometry(mapData.search_area,'boundary','fill:none;stroke:#c92a2a;stroke-width:.8px');
+ regions.forEach((g,i)=>addGeometry(g,`responsibility responsibility-${i+1}`,`fill:${colors[i]};fill-opacity:.10;stroke:${colors[i]};stroke-width:1px`));
+ const drones=planData?.drones??[];
+ if(layer('coverage'))drones.forEach((d,i)=>addGeometry(d.summary.visible_detection_area,'valid-coverage',`fill:${colors[i]};fill-opacity:.17;stroke:${colors[i]};stroke-opacity:.28;stroke-width:.18px`));
+ if(layer('patches'))drones.forEach((d,i)=>d.summary.patches.forEach(p=>addGeometry(p.geometry,p.covered?'patch':'patch uncovered',`fill:${p.covered?colors[i]:'#d95d5d'};fill-opacity:.13;stroke:#fff;stroke-width:.1px`)));
+ if(layer('buildings'))mapData.buildings.forEach(bu=>{const [x1,y1,x2,y2]=bu.bounds,r=el('rect',{x:x1,y:-y2,width:x2-x1,height:y2-y1},'building'),t=el('title');t.textContent=`${bu.id} · 高度 ${bu.height_m.toFixed(1)} 米`;r.append(t);svg.append(r)});
+ drones.forEach((d,i)=>{const route=d.summary.flight_waypoints;if(layer('route'))svg.append(el('polyline',{points:route.map(w=>`${w.x},${-w.y}`).join(' '),style:`stroke:${colors[i]}`},'route'));if(layer('waypoints'))route.forEach(w=>svg.append(el('circle',{cx:w.x,cy:-w.y,r:.75,style:`fill:${colors[i]}`},'waypoint')))});
+ [0,1].forEach(i=>{const h=[+input(`home${i+1}-x`).value,+input(`home${i+1}-y`).value];if(h.every(Number.isFinite))svg.append(el('circle',{cx:h[0],cy:-h[1],r:2,style:`fill:${colors[i]}`},'home'))});drawAnimation()}
+function drawAnimation(){if(!animation)return;animation.forEach((s,i)=>{if(s.travelled.length>1)svg.append(el('polyline',{points:s.travelled.map(points=>`${points[0]},${-points[1]}`).join(' '),style:`stroke:${colors[i]}`},'travelled'));if(s.position)svg.append(el('circle',{cx:s.position[0],cy:-s.position[1],r:1.7,style:`fill:${colors[i]}`},'drone'))})}
+function replay(){const drones=planData?.drones;if(!drones)return;cancelAnimationFrame(animationFrame);animation=drones.map(d=>({segment:0,progress:0,last:null,position:[d.summary.flight_waypoints[0].x,d.summary.flight_waypoints[0].y],travelled:[]}));input('replay').disabled=true;
+ function step(time){let active=false;animation.forEach((s,i)=>{const route=drones[i].summary.flight_waypoints;if(s.segment>=route.length-1)return;active=true;if(s.last===null)s.last=time;const dt=Math.min(50,time-s.last);s.last=time;const a=route[s.segment],b=route[s.segment+1],dist=Math.hypot(b.x-a.x,b.y-a.y);s.progress+=dist?dt/1000*(10+18*+input('speed').value)/dist:1;const r=Math.min(1,s.progress);s.position=[a.x+(b.x-a.x)*r,a.y+(b.y-a.y)*r];if(r===1){s.travelled.push([b.x,b.y]);s.segment++;s.progress=0}});draw();if(active)animationFrame=requestAnimationFrame(step);else input('replay').disabled=false}animationFrame=requestAnimationFrame(step)}
+function mapPoint(event){let p=svg.createSVGPoint();p.x=event.clientX;p.y=event.clientY;p=p.matrixTransform(svg.getScreenCTM().inverse());return[p.x,-p.y]}
+document.querySelectorAll('.draw-region').forEach(b=>b.onclick=()=>{drawTarget=+b.dataset.drone;firstCorner=null;input('draw-tip').textContent=`正在绘制无人机 ${drawTarget+1} 责任区：请点击第一个对角`;input('draw-tip').style.display='block'});
+svg.onclick=e=>{if(drawTarget===null)return;const p=mapPoint(e);if(!firstCorner){firstCorner=p;input('draw-tip').textContent='请点击另一个对角'}else{regions[drawTarget]=rectGeo(...firstCorner,...p);drawTarget=null;firstCorner=null;input('draw-tip').style.display='none';planData=null;draw()}};
+svg.onmousemove=e=>{const p=mapPoint(e);input('coords').textContent=`ENU 东向 ${p[0].toFixed(1)}，北向 ${p[1].toFixed(1)}`};
+document.querySelectorAll('[data-layer]').forEach(c=>c.onchange=draw);['home1-x','home1-y','home2-x','home2-y'].forEach(id=>input(id).oninput=draw);input('replay').onclick=replay;
+function payload(){return{drones:[0,1].map(i=>({drone_id:`drone_${i+1}`,search_geometry:regions[i],home_x_m:+input(`home${i+1}-x`).value,home_y_m:+input(`home${i+1}-y`).value})),flight_altitude_m:+input('alt').value,horizontal_clearance_m:+input('hc').value,vertical_clearance_m:+input('vc').value,scan_direction_deg:+input('angle').value,scan_pattern:input('pattern').value,video_analysis_rate_hz:+input('frequency').value,control_point_spacing_m:+input('control-spacing').value,coverage_speed_mps:+input('lane-speed').value,connector_speed_mps:+input('connector-speed').value,obstacle_speed_mps:+input('obstacle-speed').value,return_speed_mps:+input('connector-speed').value,camera:{image_width_px:1920,image_height_px:1080,horizontal_fov_deg:+input('hfov').value,vertical_fov_deg:+input('vfov').value,pitch_deg:-90,yaw_mode:'follow_path',forward_overlap:+input('fo').value,side_overlap:+input('so').value,target_width_m:+input('target-width').value,target_length_m:+input('target-length').value,target_height_m:+input('target-height').value,image_boundary_margin_ratio:+input('image-margin').value}}}
+input('plan').onclick=async()=>{const button=input('plan');input('error').style.display='none';button.disabled=true;button.textContent='正在同时规划…';try{const r=await fetch('/api/plan-dual',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload())}),body=await r.json();if(!r.ok)throw new Error(body.detail||`规划失败（${r.status}）`);planData=body;animation=null;input('summary').innerHTML='<h2>规划结果</h2>'+body.drones.map((d,i)=>{const s=d.summary;return`<p><strong style="color:${colors[i]}">无人机 ${i+1}</strong><br>策略：${strategyNames[s.scan_pattern]??s.scan_pattern}<br>有效覆盖率：${(100*s.coverage_ratio).toFixed(2)}%<br>航程：${s.path_length_m.toFixed(0)} 米<br>检测航线：${s.lane_count} 条<br>飞控途径点：${s.flight_waypoint_count} 个<br>视野计算样本：${s.visibility_sample_count} 个</p>`}).join('');input('exports').innerHTML='<a href="/api/export/mission_manifest.json">双机任务清单（JSON）</a>'+body.drones.map((d,i)=>`<p><strong>无人机 ${i+1}</strong><br><a href="/api/export/${d.drone_id}/flight_plan.json">飞控计划（JSON）</a><br><a href="/api/export/${d.drone_id}/coverage_report.json">覆盖报告（JSON）</a><br><a href="/api/export/${d.drone_id}/visualization.png">规划结果图（PNG）</a></p>`).join('');draw();input('replay').disabled=false}catch(e){input('error').textContent=e.message;input('error').style.display='block'}finally{button.disabled=false;button.textContent='同时规划两架无人机'}};
+async function load(){try{const r=await fetch('/api/map');mapData=await r.json();defaultRegions();draw()}catch(e){input('error').textContent='地图加载失败，请确认规划服务正在运行。';input('error').style.display='block'}}load();

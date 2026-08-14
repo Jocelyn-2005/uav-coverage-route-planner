@@ -19,20 +19,23 @@ from coverage_planner.models.flight import (
     SegmentKind,
 )
 from coverage_planner.models.search_area import Polygonal
+from coverage_planner.models.semantic_map import SemanticMap
 from coverage_planner.models.waypoint import Waypoint
+from coverage_planner.visibility import visible_detection_ground
 
 
 def build_continuous_flight_plan(
     route: tuple[Waypoint, ...], *, camera: CameraConfig, flight_altitude_m: float,
-    ground_elevation_m: float, capture_frequency_hz: float,
+    ground_elevation_m: float, video_analysis_rate_hz: float,
     coverage_speed_mps: float, connector_speed_mps: float,
     obstacle_speed_mps: float, return_speed_mps: float,
     control_point_spacing_m: float = 10.0,
     capture_region: Polygonal | None = None,
-) -> tuple[ContinuousFlightPlan, dict[str, Polygon]]:
-    """Convert a routed polyline into commands and uniformly sampled image footprints."""
-    if capture_frequency_hz <= 0:
-        raise ValueError("capture_frequency_hz must be greater than zero")
+    semantic_map: SemanticMap | None = None,
+) -> tuple[ContinuousFlightPlan, dict[str, Polygonal]]:
+    """Convert a route into commands and sample its continuous visibility sweep."""
+    if video_analysis_rate_hz <= 0:
+        raise ValueError("video_analysis_rate_hz must be greater than zero")
     if control_point_spacing_m <= 0:
         raise ValueError("control_point_spacing_m must be greater than zero")
     route = _compact_route(route)
@@ -42,7 +45,7 @@ def build_continuous_flight_plan(
     maximum_capture_spacing_m = dimensions.capture_spacing_m
     commanded_waypoints: list[FlightWaypoint] = []
     segments: list[RouteSegment] = []
-    footprints: dict[str, Polygon] = {}
+    footprints: dict[str, Polygonal] = {}
 
     for sequence, waypoint in enumerate(route, 1):
         if sequence < len(route):
@@ -69,12 +72,12 @@ def build_continuous_flight_plan(
             start_waypoint_id=commanded_waypoints[sequence - 1].id,
             end_waypoint_id=commanded_waypoints[sequence].id,
             heading_deg=heading, speed_mps=speed, length_m=length,
-            capture_enabled=kind == "coverage_lane",
+            detection_enabled=kind == "coverage_lane",
             source_scan_line_index=end.scan_line_index if kind == "coverage_lane" else None,
             source_scan_segment_index=end.scan_segment_index if kind == "coverage_lane" else None))
         if kind != "coverage_lane":
             continue
-        temporal_spacing_m = speed / capture_frequency_hz
+        temporal_spacing_m = speed / video_analysis_rate_hz
         spacing_m = min(temporal_spacing_m, maximum_capture_spacing_m)
         interval_count = max(1, ceil(length / spacing_m - 1e-12)) if length else 1
         for sample_index in range(interval_count + 1):
@@ -82,9 +85,10 @@ def build_continuous_flight_plan(
             point = (start.x + fraction * (end.x - start.x),
                      start.y + fraction * (end.y - start.y))
             sample_id = f"{segment_id}_image_{sample_index:04d}"
-            footprints[sample_id] = ground_footprint_polygon(
-                camera, center_enu_m=point, flight_altitude_m=flight_altitude_m,
-                ground_elevation_m=ground_elevation_m, yaw_deg=heading)
+            footprints[sample_id] = _detection_ground(
+                camera, point=point, flight_altitude_m=flight_altitude_m,
+                ground_elevation_m=ground_elevation_m, yaw_deg=heading,
+                semantic_map=semantic_map)
 
     if capture_region is not None:
         covered = unary_union(tuple(footprints.values())) if footprints else Polygon()
@@ -92,48 +96,68 @@ def build_continuous_flight_plan(
         for index, ((start, end), segment) in enumerate(zip(pairwise(route), segments, strict=True)):
             if segment.kind == "coverage_lane" or remaining.is_empty:
                 continue
-            spacing_m = min(segment.speed_mps / capture_frequency_hz, maximum_capture_spacing_m)
+            spacing_m = min(segment.speed_mps / video_analysis_rate_hz, maximum_capture_spacing_m)
             interval_count = max(1, ceil(segment.length_m / spacing_m - 1e-12))
             captured = False
             for sample_index in range(interval_count + 1):
                 fraction = sample_index / interval_count
                 point = (start.x + fraction * (end.x - start.x),
                          start.y + fraction * (end.y - start.y))
-                footprint = ground_footprint_polygon(
-                    camera, center_enu_m=point, flight_altitude_m=flight_altitude_m,
-                    ground_elevation_m=ground_elevation_m, yaw_deg=segment.heading_deg)
+                footprint = _detection_ground(
+                    camera, point=point, flight_altitude_m=flight_altitude_m,
+                    ground_elevation_m=ground_elevation_m, yaw_deg=segment.heading_deg,
+                    semantic_map=semantic_map)
                 if footprint.intersection(remaining).area <= 1e-6:
                     continue
                 footprints[f"{segment.id}_opportunistic_{sample_index:04d}"] = footprint
                 remaining = remaining.difference(footprint)
                 captured = True
             if captured:
-                segments[index] = replace(segment, capture_enabled=True)
+                segments[index] = replace(segment, detection_enabled=True)
 
     covered_route_indices = {
         index
         for index, segment in enumerate(segments)
-        if segment.capture_enabled
+        if segment.detection_enabled
         for index in (index, index + 1)
     }
     for index, waypoint in enumerate(route):
         if not waypoint.capture or index in covered_route_indices:
             continue
         sample_id = f"segment_point_{index + 1:04d}_image_0000"
-        footprints[sample_id] = ground_footprint_polygon(
-            camera, center_enu_m=(waypoint.x, waypoint.y),
+        footprints[sample_id] = _detection_ground(
+            camera, point=(waypoint.x, waypoint.y),
             flight_altitude_m=flight_altitude_m,
-            ground_elevation_m=ground_elevation_m, yaw_deg=waypoint.yaw_deg)
+            ground_elevation_m=ground_elevation_m, yaw_deg=waypoint.yaw_deg,
+            semantic_map=semantic_map)
 
     commanded_waypoints, segments = _densify_commands(
         commanded_waypoints, segments, control_point_spacing_m)
     lanes = _group_lanes(segments)
     return ContinuousFlightPlan(
-        capture_frequency_hz=capture_frequency_hz,
+        video_analysis_rate_hz=video_analysis_rate_hz,
         control_point_spacing_m=control_point_spacing_m, lane_overlap=camera.side_overlap,
-        forward_overlap=camera.forward_overlap, waypoints=tuple(commanded_waypoints),
+        forward_overlap=camera.forward_overlap,
+        target_width_m=camera.target_width_m, target_length_m=camera.target_length_m,
+        target_height_m=camera.target_height_m,
+        image_boundary_margin_ratio=camera.image_boundary_margin_ratio,
+        waypoints=tuple(commanded_waypoints),
         route_segments=tuple(segments), lanes=lanes,
-        sampled_footprint_count=len(footprints)), footprints
+        visibility_sample_count=len(footprints)), footprints
+
+
+def _detection_ground(
+    camera: CameraConfig, *, point: tuple[float, float], flight_altitude_m: float,
+    ground_elevation_m: float, yaw_deg: float, semantic_map: SemanticMap | None,
+) -> Polygonal:
+    if semantic_map is not None:
+        return visible_detection_ground(
+            camera, center_enu_m=point, flight_altitude_m=flight_altitude_m,
+            ground_elevation_m=ground_elevation_m, yaw_deg=yaw_deg,
+            semantic_map=semantic_map)
+    return ground_footprint_polygon(
+        camera, center_enu_m=point, flight_altitude_m=flight_altitude_m,
+        ground_elevation_m=ground_elevation_m, yaw_deg=yaw_deg)
 
 
 def _densify_commands(
