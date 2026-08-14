@@ -24,6 +24,9 @@ svg{width:100%;height:100%}
 .lane-route{stroke-width:.75;stroke-linecap:round}
 .transition-route{stroke-width:.6;stroke-dasharray:2 1.2;stroke-linecap:round;opacity:.9}
 .coverage-cell{pointer-events:none}
+.coverage-cell-boundary{fill-opacity:.11;stroke-width:1.2;stroke-dasharray:3 1.2;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.coverage-cell-label-bg{fill:#fff;fill-opacity:.92;stroke:#17202a;stroke-width:.35}
+.coverage-cell-label{font-size:4px;font-weight:700;fill:#17202a}
 .waypoint{fill:#111;stroke:#fff;stroke-width:.2}
 .transit{fill:#f08c00}
 .map-frame{fill:none;stroke:#c92a2a;stroke-width:1.1;pointer-events:none}

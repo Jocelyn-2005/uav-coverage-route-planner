@@ -6,7 +6,9 @@ from coverage_planner.coverage.generators import (
     BCDGenerator,
     CoverageStructureGenerator,
     ScanlineClippedGenerator,
+    build_boustrophedon_planning_cells,
     decompose_boustrophedon_cells,
+    merge_small_boustrophedon_cells,
 )
 from coverage_planner.models.camera import CameraConfig
 
@@ -151,16 +153,31 @@ def test_bcd_generator_uses_same_capture_plan_contract() -> None:
         ground_elevation_m=0, scan_direction_deg=90)
     assert generator.method == "bcd"
     assert plan.capture_waypoints
-    baseline = generate_capture_plan(
-        geometry, camera=camera(), flight_altitude_m=5,
-        ground_elevation_m=0, scan_direction_deg=90)
-    assert {
-        (segment.start_enu_m, segment.end_enu_m)
-        for segment in plan.scan_segments
-    } == {
-        (segment.start_enu_m, segment.end_enu_m)
-        for segment in baseline.scan_segments
-    }
     assert all(segment.coverage_cell_index is not None for segment in plan.scan_segments)
     assert all(geometry.covers(Point(waypoint.x, waypoint.y))
                for waypoint in plan.capture_waypoints)
+    cells = build_boustrophedon_planning_cells(
+        geometry, camera=camera(), flight_altitude_m=5,
+        ground_elevation_m=0, scan_direction_deg=90)
+    assert {segment.coverage_cell_index for segment in plan.scan_segments} == set(range(len(cells)))
+    assert len({
+        (segment.scan_line_index, segment.segment_index)
+        for segment in plan.scan_segments
+    }) == len(plan.scan_segments)
+    assert all(
+        cells[segment.coverage_cell_index].covers(Point(segment.start_enu_m))
+        and cells[segment.coverage_cell_index].covers(Point(segment.end_enu_m))
+        for segment in plan.scan_segments
+        if segment.coverage_cell_index is not None
+    )
+
+
+def test_small_bcd_cell_merges_into_adjacent_planning_cell() -> None:
+    large = box(0, 0, 20, 20)
+    small = box(20, 0, 22, 5)
+    cells = merge_small_boustrophedon_cells(
+        (large, small), maximum_small_area_m2=20)
+    assert len(cells) == 1
+    assert cells[0].area == pytest.approx(large.area + small.area)
+    assert cells[0].covers(large)
+    assert cells[0].covers(small)

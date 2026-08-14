@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from shapely.geometry import LineString, box, mapping, shape
 
-from coverage_planner.coverage.generators import decompose_boustrophedon_cells
+from coverage_planner.coverage.generators import build_boustrophedon_planning_cells
 from coverage_planner.geometry.calibration import MapCalibration
 from coverage_planner.io import load_semantic_map
 from coverage_planner.io.semantic_map import building_safety_elevations, building_safety_geometry
@@ -148,7 +148,11 @@ def plan(request: PlanRequest) -> dict[str, Any]:
             )
             export_plan(result, RESULTS)
         return {"summary": _web_result(
-            result, [request.home_x_m, request.home_y_m, request.flight_altitude_m])}
+            result,
+            [request.home_x_m, request.home_y_m, request.flight_altitude_m],
+            camera=request.camera,
+            flight_altitude_m=request.flight_altitude_m,
+        )}
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -191,14 +195,25 @@ def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
             response.append({
                 "drone_id": drone.drone_id,
                 "responsibility_area": mapping(drone.assigned_geometry),
-                "summary": _web_result(drone.result, [first.x, first.y, first.z]),
+                "summary": _web_result(
+                    drone.result,
+                    [first.x, first.y, first.z],
+                    camera=request.camera,
+                    flight_altitude_m=request.flight_altitude_m,
+                ),
             })
         return {"drones": response}
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
+def _web_result(
+    result: PlanResult,
+    home: list[float],
+    *,
+    camera: CameraConfig,
+    flight_altitude_m: float,
+) -> dict[str, Any]:
     route_coordinates = [(waypoint.x, waypoint.y)
                          for waypoint in result.continuous_flight.waypoints]
     route = LineString(route_coordinates) if len(route_coordinates) > 1 else None
@@ -211,8 +226,11 @@ def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
     } for sample_id, geometry in result.visibility_samples),
         key=lambda sample: (sample["route_progress"], sample["id"]))
     coverage_cells = (
-        decompose_boustrophedon_cells(
+        build_boustrophedon_planning_cells(
             result.effective_area.geometry,
+            camera=camera,
+            flight_altitude_m=flight_altitude_m,
+            ground_elevation_m=0.0,
             scan_direction_deg=result.scan_direction_deg,
         ) if result.coverage_generation_method == "bcd" else ())
     return {
@@ -250,7 +268,16 @@ def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
             "visible_detection_area": mapping(result.visible_detection_geometry),
             "visibility_samples": visibility_samples,
             "obstacles": mapping(result.obstacles.geometry),
-            "coverage_cells": [mapping(cell) for cell in coverage_cells],
+            "coverage_cells": [{
+                "id": f"cell_{index + 1:03d}",
+                "index": index,
+                "geometry": mapping(cell),
+                "area_m2": cell.area,
+                "label_point": [
+                    cell.representative_point().x,
+                    cell.representative_point().y,
+                ],
+            } for index, cell in enumerate(coverage_cells)],
             "patches": [{"id":p.id,"geometry":mapping(p.geometry),"covered":p.covered,"ratio":p.coverage_ratio} for p in result.patches],
             "flight_waypoints": [{
                 "id": w.id, "x": w.x, "y": w.y, "z": w.z,

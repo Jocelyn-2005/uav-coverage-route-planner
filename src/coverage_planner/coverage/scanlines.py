@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import ceil
 
@@ -48,18 +49,51 @@ def generate_capture_plan(
     direction_deg = scan_direction_deg % 360.0
     rotation_deg = direction_deg - 90.0
     scan_geometry = affinity.rotate(effective_geometry, rotation_deg, origin=(0.0, 0.0))
-    min_x, min_y, max_x, max_y = scan_geometry.bounds
+    _, min_y, _, max_y = scan_geometry.bounds
     line_positions = _scan_line_positions(
         min_y,
         max_y,
         footprint_width_m=dimensions.width_m,
         spacing_m=dimensions.scan_line_spacing_m,
     )
+    return generate_capture_plan_on_scan_lines(
+        effective_geometry,
+        camera=camera,
+        flight_altitude_m=flight_altitude_m,
+        ground_elevation_m=ground_elevation_m,
+        scan_direction_deg=scan_direction_deg,
+        scan_lines=tuple(enumerate(line_positions)),
+    )
+
+
+def generate_capture_plan_on_scan_lines(
+    effective_geometry: Polygonal,
+    *,
+    camera: CameraConfig,
+    flight_altitude_m: float,
+    ground_elevation_m: float,
+    scan_direction_deg: float,
+    scan_lines: Sequence[tuple[int, float]],
+) -> CapturePlan:
+    """Generate lanes on an existing rotated-coordinate scanline lattice."""
+    if effective_geometry.is_empty:
+        return CapturePlan(scan_direction_deg % 360.0, (), ())
+    if not effective_geometry.is_valid:
+        raise ScanlinePlanningError("effective search geometry must be valid")
+    dimensions = ground_footprint_dimensions(
+        camera,
+        flight_altitude_m=flight_altitude_m,
+        ground_elevation_m=ground_elevation_m,
+    )
+    direction_deg = scan_direction_deg % 360.0
+    rotation_deg = direction_deg - 90.0
+    scan_geometry = affinity.rotate(effective_geometry, rotation_deg, origin=(0.0, 0.0))
+    min_x, _, max_x, _ = scan_geometry.bounds
     margin_m = max(max_x - min_x, dimensions.length_m) + dimensions.length_m
 
     waypoints: list[Waypoint] = []
     segments: list[ScanSegment] = []
-    for line_index, line_y in enumerate(line_positions):
+    for line_index, line_y in scan_lines:
         line = LineString([(min_x - margin_m, line_y), (max_x + margin_m, line_y)])
         line_segments = sorted(
             _line_parts(scan_geometry.intersection(line)), key=lambda segment: segment.bounds[0]
@@ -119,6 +153,33 @@ def generate_capture_plan(
                 capture_waypoint_ids=tuple(ids),
             ))
     return CapturePlan(direction_deg, tuple(segments), tuple(waypoints))
+
+
+def scan_line_lattice(
+    effective_geometry: Polygonal,
+    *,
+    camera: CameraConfig,
+    flight_altitude_m: float,
+    ground_elevation_m: float,
+    scan_direction_deg: float,
+) -> tuple[tuple[int, float], ...]:
+    """Return one shared scanline spacing and phase for a complete geometry."""
+    if effective_geometry.is_empty:
+        return ()
+    dimensions = ground_footprint_dimensions(
+        camera,
+        flight_altitude_m=flight_altitude_m,
+        ground_elevation_m=ground_elevation_m,
+    )
+    rotated = affinity.rotate(
+        effective_geometry, scan_direction_deg % 360.0 - 90.0, origin=(0.0, 0.0))
+    _, min_y, _, max_y = rotated.bounds
+    return tuple(enumerate(_scan_line_positions(
+        min_y,
+        max_y,
+        footprint_width_m=dimensions.width_m,
+        spacing_m=dimensions.scan_line_spacing_m,
+    )))
 
 
 def _scan_line_positions(
