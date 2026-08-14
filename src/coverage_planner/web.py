@@ -37,7 +37,7 @@ class PlanRequest(BaseModel):
     vertical_clearance_m: float = Field(ge=0)
     scan_direction_deg: float | None = None
     camera: CameraConfig
-    scan_pattern: Literal["lawn_mower"] = "lawn_mower"
+    scan_pattern: Literal["scanline_clipped", "bcd"] = "scanline_clipped"
     video_analysis_rate_hz: float = Field(default=2.0, gt=0)
     control_point_spacing_m: float = Field(default=10.0, gt=0)
     coverage_speed_mps: float = Field(default=5.0, gt=0)
@@ -60,7 +60,7 @@ class DualPlanRequest(BaseModel):
     vertical_clearance_m: float = Field(ge=0)
     scan_direction_deg: float | None = None
     camera: CameraConfig
-    scan_pattern: Literal["lawn_mower"] = "lawn_mower"
+    scan_pattern: Literal["scanline_clipped", "bcd"] = "scanline_clipped"
     video_analysis_rate_hz: float = Field(default=2.0, gt=0)
     control_point_spacing_m: float = Field(default=10.0, gt=0)
     coverage_speed_mps: float = Field(default=5.0, gt=0)

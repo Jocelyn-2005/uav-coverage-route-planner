@@ -13,7 +13,7 @@ h2{font-size:13px;margin:5px 0 10px;text-transform:uppercase;color:#65717c}
 label{display:block;font-size:12px;margin:8px 0;color:#39434c}
 label div{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 label div.three{grid-template-columns:1fr 1fr 1fr}
-input[type=number]{width:100%;padding:7px;border:1px solid #bcc6ce;border-radius:3px;margin-top:4px}
+input[type=number],select{width:100%;padding:7px;border:1px solid #bcc6ce;border-radius:3px;margin-top:4px;background:#fff}
 input[type=checkbox]{vertical-align:middle}
 input[type=range]{width:100%}
 #map{position:relative;overflow:hidden;background:#d8dde0}

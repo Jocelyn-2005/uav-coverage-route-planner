@@ -59,8 +59,8 @@ def test_lawn_mower_returns_home_and_avoids_obstacles() -> None:
     result = CoveragePlanner().plan(
         semantic_map=semantic_map(), search_geometry=box(0, 0, 40, 30), camera=camera(),
         flight_altitude_m=10, start=(20, 15, 10), scan_pattern="lawn_mower")
-    assert {item.pattern for item in result.strategy_comparison} == {"lawn_mower"}
-    assert result.scan_pattern == "lawn_mower"
+    assert {item.pattern for item in result.strategy_comparison} == {"scanline_clipped"}
+    assert result.scan_pattern == "scanline_clipped"
     assert (result.planning_route[0].x, result.planning_route[0].y) == (20, 15)
     assert (result.planning_route[-1].x, result.planning_route[-1].y) == (20, 15)
     points = {waypoint.id: waypoint for waypoint in result.continuous_flight.waypoints}
@@ -68,6 +68,16 @@ def test_lawn_mower_returns_home_and_avoids_obstacles() -> None:
         start, end = points[segment.start_waypoint_id], points[segment.end_waypoint_id]
         assert LineString([(start.x, start.y), (end.x, end.y)]).relate(
             result.obstacles.geometry)[0] == "F"
+
+
+def test_bcd_is_a_parallel_coverage_generator() -> None:
+    result = CoveragePlanner().plan(
+        semantic_map=semantic_map(), search_geometry=box(0, 0, 40, 30), camera=camera(),
+        flight_altitude_m=10, start=(20, 15, 10), scan_pattern="bcd",
+        scan_direction_deg=90)
+    assert result.scan_pattern == "bcd"
+    assert result.coverage_requirement_met
+    assert result.continuous_flight.lanes
 
 
 def test_low_altitude_coverage_uses_only_reachable_captures() -> None:

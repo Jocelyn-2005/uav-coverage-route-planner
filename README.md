@@ -134,9 +134,16 @@ results/example_run/visualization.png
 
 - [问题定义与数学模型](docs/optimization-model.md)
 - [几何与优化算法设计](docs/algorithm-design.md)
+- [覆盖结构与组合优化 Benchmark](docs/benchmark-design.md)
 - [下层飞控接口](docs/flight-controller-interface.md)
 - [后续设计边界](docs/future-design.md)
 
 ## 当前能力边界
 
 当前版本是确定性的分层启发式求解器，不宣称获得全局最优解。它已实现双机人工责任区、固定高度正射覆盖、目标完整入镜约束、建筑墙体遮挡、往复式扫描、建筑高度相关避障、可见图最短路、连续视频覆盖评估和飞控途径点导出。暂不处理运动目标、双机时空碰撞、地形跟随、斜视相机、任意建筑网格以及动力学平滑。
+
+项目并列提供两种基础覆盖结构生成方法：`ScanlineClippedGenerator` 先生成全局平行
+扫描线，再由搜索边界、建筑和安全区裁剪成 lane；`BCDGenerator` 先在扫描拓扑发生
+分裂或合并的位置构造单调 cell，再在各 cell 内生成往复式 lane。二者不存在升级或
+替代关系，均转换为统一的 `LaneRoutingProblem`，共用 Greedy 排序、避障连接和飞控
+导出。2-opt、Or-opt 和小规模精确 GTSP/MILP 仍是后续优化基线。

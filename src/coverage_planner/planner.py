@@ -20,6 +20,8 @@ from coverage_planner.coverage import (
     prepare_lane_route,
     supplement_uncovered_patches,
 )
+from coverage_planner.coverage.generators import BCDGenerator, ScanlineClippedGenerator
+from coverage_planner.coverage.generators.base import CoverageStructureGenerator
 from coverage_planner.coverage.scanlines import CapturePlan
 from coverage_planner.geometry import build_effective_search_area
 from coverage_planner.io.semantic_map import building_safety_geometry
@@ -76,7 +78,7 @@ class PlanResult:
     minimum_obstacle_clearance_m: float | None
     minimum_required_coverage_ratio: float
     coverage_requirement_met: bool
-    scan_pattern: str = "lawn_mower"
+    scan_pattern: str = "scanline_clipped"
     strategy_comparison: tuple[StrategyMetrics, ...] = ()
 
     @property
@@ -93,7 +95,7 @@ class CoveragePlanner:
         patch_config: PatchGridConfig | None = None, ground_elevation_m: float = 0.0,
         minimum_coverage_ratio: float = 0.95,
         return_to_start: bool = True,
-        scan_pattern: Literal["lawn_mower"] = "lawn_mower",
+        scan_pattern: Literal["scanline_clipped", "bcd", "lawn_mower"] = "scanline_clipped",
         video_analysis_rate_hz: float = 2.0,
         control_point_spacing_m: float = 10.0,
         coverage_speed_mps: float = 5.0,
@@ -110,7 +112,9 @@ class CoveragePlanner:
             vertical_clearance_m=vertical_clearance_m,
             horizontal_clearance_m=horizontal_clearance_m,
             allow_overflight_above_buildings=allow_overflight_above_buildings)
-        patterns = (scan_pattern,)
+        canonical_pattern = (
+            "scanline_clipped" if scan_pattern == "lawn_mower" else scan_pattern)
+        patterns = (canonical_pattern,)
         candidates = tuple(self._run_pattern(
             pattern=pattern, effective_geometry=effective.geometry, patches=patches,
             semantic_map=semantic_map,
@@ -252,17 +256,21 @@ class CoveragePlanner:
         start: tuple[float, float, float], obstacle_geometry: Polygonal,
         return_to_start: bool,
     ) -> PatternCandidate:
-        from coverage_planner.coverage import generate_capture_plan
-
-        if pattern == "lawn_mower":
-            if scan_direction_deg is None:
-                capture_plan, _ = optimize_scan_direction(
-                    effective_geometry, camera=camera, flight_altitude_m=flight_altitude_m,
-                    ground_elevation_m=ground_elevation_m)
-            else:
-                capture_plan = generate_capture_plan(
-                    effective_geometry, camera=camera, flight_altitude_m=flight_altitude_m,
-                    ground_elevation_m=ground_elevation_m, scan_direction_deg=scan_direction_deg)
+        generator: CoverageStructureGenerator
+        if pattern == "scanline_clipped":
+            generator = ScanlineClippedGenerator()
+        elif pattern == "bcd":
+            generator = BCDGenerator()
+        else:
+            raise ValueError(f"unsupported coverage generator: {pattern}")
+        if scan_direction_deg is None:
+            capture_plan, _ = optimize_scan_direction(
+                effective_geometry, camera=camera, flight_altitude_m=flight_altitude_m,
+                ground_elevation_m=ground_elevation_m, generator=generator)
+        else:
+            capture_plan = generator.generate(
+                effective_geometry, camera=camera, flight_altitude_m=flight_altitude_m,
+                ground_elevation_m=ground_elevation_m, scan_direction_deg=scan_direction_deg)
         capture_plan, _ = supplement_uncovered_patches(
             capture_plan, patches, camera=camera, flight_altitude_m=flight_altitude_m,
             ground_elevation_m=ground_elevation_m, minimum_coverage_ratio=minimum_coverage_ratio)

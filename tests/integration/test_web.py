@@ -21,3 +21,23 @@ def test_web_request_rejects_invalid_camera() -> None:
             "vertical_clearance_m":2,"camera":{"image_width_px":10,"image_height_px":10,
             "horizontal_fov_deg":60,"vertical_fov_deg":45,"pitch_deg":-45,
             "yaw_mode":"follow_path","forward_overlap":.3,"side_overlap":.3}})
+
+
+def test_web_request_accepts_both_parallel_generators() -> None:
+    base = {
+        "search_geometry": {
+            "type": "Polygon",
+            "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]],
+        },
+        "flight_altitude_m": 30,
+        "horizontal_clearance_m": 3,
+        "vertical_clearance_m": 2,
+        "camera": {
+            "image_width_px": 10, "image_height_px": 10,
+            "horizontal_fov_deg": 60, "vertical_fov_deg": 45,
+            "pitch_deg": -90, "yaw_mode": "follow_path",
+            "forward_overlap": .3, "side_overlap": .3,
+        },
+    }
+    assert PlanRequest.model_validate({**base, "scan_pattern": "scanline_clipped"})
+    assert PlanRequest.model_validate({**base, "scan_pattern": "bcd"})

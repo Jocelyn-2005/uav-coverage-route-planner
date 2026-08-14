@@ -1,8 +1,16 @@
+from math import sqrt
+
+import pytest
 from shapely.geometry import Polygon
 
 from coverage_planner.coverage.optimization import prepare_lane_route
 from coverage_planner.coverage.scanlines import CapturePlan
 from coverage_planner.models import Waypoint
+from coverage_planner.optimization import (
+    GreedyLaneRouter,
+    build_lane_routing_problem,
+    build_transition_costs,
+)
 
 
 def point(identifier: str, sequence: int, x: float, y: float,
@@ -29,3 +37,42 @@ def test_lane_route_keeps_only_endpoints_and_chooses_near_orientation() -> None:
         (10, 0), (0, 0), (0, 10), (10, 10)]
     assert [item.id for item in route] == [
         "wp_0001", "wp_0002", "wp_0003", "wp_0004"]
+
+
+def test_canonical_problem_separates_jobs_from_solver() -> None:
+    plan = CapturePlan(90, (), (
+        point("a", 1, 0, 0, 0), point("b", 2, 10, 0, 0),
+        point("c", 3, 0, 10, 1), point("d", 4, 10, 10, 1),
+    ))
+    problem, skipped = build_lane_routing_problem(
+        plan, start_enu_m=(11, 0), obstacles=Polygon())
+    assert skipped == ()
+    assert [job.id for job in problem.jobs] == ["lane_job_0001", "lane_job_0002"]
+    assert all(len(job.orientations) == 2 for job in problem.jobs)
+    solution = GreedyLaneRouter().solve(problem)
+    assert solution.method == "greedy_obstacle_distance"
+    assert solution.job_order == ("lane_job_0001", "lane_job_0002")
+    assert solution.orientation_indices == (1, 0)
+    assert solution.transition_cost_m == 11
+    assert solution.return_cost_m == pytest.approx(sqrt(101))
+    assert [(waypoint.x, waypoint.y) for waypoint in solution.ordered_waypoints] == [
+        (10, 0), (0, 0), (0, 10), (10, 10)]
+
+
+def test_transition_matrix_uses_same_oriented_lane_states_for_all_solvers() -> None:
+    plan = CapturePlan(90, (), (
+        point("a", 1, 0, 0, 0), point("b", 2, 10, 0, 0),
+        point("c", 3, 0, 10, 1), point("d", 4, 10, 10, 1),
+    ))
+    problem, _ = build_lane_routing_problem(
+        plan, start_enu_m=(0, 0), obstacles=Polygon())
+    costs = build_transition_costs(problem)
+    assert len(costs.states) == 4
+    first_forward = costs.state_index(0, 0)
+    first_reverse = costs.state_index(0, 1)
+    second_forward = costs.state_index(1, 0)
+    assert costs.depot_to_state_m[first_forward] == 0
+    assert costs.depot_to_state_m[first_reverse] == 10
+    assert costs.state_to_state_m[first_forward][first_reverse] == float("inf")
+    assert costs.state_to_state_m[first_forward][second_forward] == pytest.approx(sqrt(200))
+    assert costs.state_to_depot_m[second_forward] == pytest.approx(sqrt(200))

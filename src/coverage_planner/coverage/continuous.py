@@ -6,7 +6,7 @@ from dataclasses import replace
 from itertools import pairwise
 from math import acos, atan2, ceil, degrees, hypot
 
-from shapely import unary_union
+from shapely import difference, intersection, unary_union
 from shapely.geometry import Polygon
 
 from coverage_planner.camera import ground_footprint_dimensions, ground_footprint_polygon
@@ -22,6 +22,11 @@ from coverage_planner.models.search_area import Polygonal
 from coverage_planner.models.semantic_map import SemanticMap
 from coverage_planner.models.waypoint import Waypoint
 from coverage_planner.visibility import visible_detection_ground
+
+# Repeatedly subtracting almost coincident camera footprints can leave edges at
+# floating-point precision.  A sub-micrometre precision grid keeps GEOS overlay
+# operations deterministic without changing planning geometry at metre scale.
+_OVERLAY_GRID_SIZE_M = 1e-6
 
 
 def build_continuous_flight_plan(
@@ -92,7 +97,8 @@ def build_continuous_flight_plan(
 
     if capture_region is not None:
         covered = unary_union(tuple(footprints.values())) if footprints else Polygon()
-        remaining = capture_region.difference(covered)
+        remaining = difference(
+            capture_region, covered, grid_size=_OVERLAY_GRID_SIZE_M)
         for index, ((start, end), segment) in enumerate(zip(pairwise(route), segments, strict=True)):
             if segment.kind == "coverage_lane" or remaining.is_empty:
                 continue
@@ -107,10 +113,13 @@ def build_continuous_flight_plan(
                     camera, point=point, flight_altitude_m=flight_altitude_m,
                     ground_elevation_m=ground_elevation_m, yaw_deg=segment.heading_deg,
                     semantic_map=semantic_map)
-                if footprint.intersection(remaining).area <= 1e-6:
+                overlap = intersection(
+                    footprint, remaining, grid_size=_OVERLAY_GRID_SIZE_M)
+                if overlap.area <= 1e-6:
                     continue
                 footprints[f"{segment.id}_opportunistic_{sample_index:04d}"] = footprint
-                remaining = remaining.difference(footprint)
+                remaining = difference(
+                    remaining, footprint, grid_size=_OVERLAY_GRID_SIZE_M)
                 captured = True
             if captured:
                 segments[index] = replace(segment, detection_enabled=True)

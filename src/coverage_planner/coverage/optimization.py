@@ -7,17 +7,16 @@ from dataclasses import dataclass, replace
 from itertools import pairwise
 from math import hypot
 
-from shapely import affinity
-from shapely.geometry import LineString, MultiLineString, Point
-
 from coverage_planner.camera import ground_footprint_polygon
 from coverage_planner.coverage.evaluation import evaluate_patch_coverage
-from coverage_planner.coverage.scanlines import CapturePlan, generate_capture_plan
+from coverage_planner.coverage.generators.base import CoverageStructureGenerator
+from coverage_planner.coverage.generators.scanline_clipped import ScanlineClippedGenerator
+from coverage_planner.coverage.scanlines import CapturePlan
 from coverage_planner.models.camera import CameraConfig
 from coverage_planner.models.patch import Patch
 from coverage_planner.models.search_area import Polygonal
 from coverage_planner.models.waypoint import Waypoint
-from coverage_planner.routing.visibility import RoutingError, VisibilityRouter
+from coverage_planner.optimization import GreedyLaneRouter, build_lane_routing_problem
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,12 +37,14 @@ class DirectionScore:
 def optimize_scan_direction(
     geometry: Polygonal, *, camera: CameraConfig, flight_altitude_m: float,
     ground_elevation_m: float, candidate_angles_deg: Sequence[float] = tuple(range(0, 180, 15)),
+    generator: CoverageStructureGenerator | None = None,
 ) -> tuple[CapturePlan, tuple[DirectionScore, ...]]:
     if not candidate_angles_deg:
         raise ValueError("candidate_angles_deg cannot be empty")
+    selected_generator: CoverageStructureGenerator = generator or ScanlineClippedGenerator()
     candidates = []
     for angle in candidate_angles_deg:
-        plan = generate_capture_plan(
+        plan = selected_generator.generate(
             geometry, camera=camera, flight_altitude_m=flight_altitude_m,
             ground_elevation_m=ground_elevation_m, scan_direction_deg=angle,
         )
@@ -95,90 +96,11 @@ def supplement_uncovered_patches(
 def prepare_lane_route(
     plan: CapturePlan, *, start_enu_m: tuple[float, float], obstacles: Polygonal,
 ) -> tuple[tuple[Waypoint, ...], tuple[str, ...]]:
-    """Reduce dense capture samples to ordered lane endpoints before routing."""
-    jobs: list[tuple[Waypoint, ...]] = []
-    skipped: list[str] = []
-    current_key: tuple[int | None, int | None] | None = None
-    current: list[Waypoint] = []
-
-    def finish_job() -> None:
-        if not current:
-            return
-        if len(current) == 1:
-            if obstacles.covers(Point(current[0].x, current[0].y)):
-                skipped.append(current[0].id)
-            else:
-                jobs.append((current[0],))
-            return
-        source = LineString([(current[0].x, current[0].y), (current[-1].x, current[-1].y)])
-        clipped = source.difference(obstacles)
-        parts = list(clipped.geoms) if isinstance(clipped, MultiLineString) else [clipped]
-        usable = [part for part in parts if isinstance(part, LineString) and part.length > 2e-6]
-        if not usable:
-            skipped.extend(wp.id for wp in current)
-            return
-        for part in usable:
-            # Visibility routing treats the safety-buffer boundary as blocked.
-            start = Point(part.coords[0])
-            end = Point(part.coords[-1])
-            if obstacles.covers(start):
-                start = part.interpolate(1e-6)
-            if obstacles.covers(end):
-                end = part.interpolate(part.length - 1e-6)
-            endpoints = []
-            for template, point in ((current[0], start), (current[-1], end)):
-                footprint = template.camera_footprint_enu
-                if footprint is not None:
-                    footprint = affinity.translate(
-                        footprint, xoff=point.x - template.x, yoff=point.y - template.y)
-                endpoints.append(replace(
-                    template, x=float(point.x), y=float(point.y),
-                    camera_footprint_enu=footprint))
-            jobs.append(tuple(endpoints))
-
-    for waypoint in plan.capture_waypoints:
-        key = (waypoint.scan_line_index, waypoint.scan_segment_index)
-        if key == (None, None):
-            finish_job()
-            current = []
-            current_key = None
-            if obstacles.covers(Point(waypoint.x, waypoint.y)):
-                skipped.append(waypoint.id)
-            else:
-                jobs.append((waypoint,))
-            continue
-        if current and key != current_key:
-            finish_job()
-            current = []
-        current_key = key
-        current.append(waypoint)
-    finish_job()
-
-    ordered: list[Waypoint] = []
-    position = start_enu_m
-    router = VisibilityRouter(obstacles)
-    while jobs:
-        choices: list[tuple[float, int, bool]] = []
-        for index, job in enumerate(jobs):
-            orientations = (False, True) if len(job) > 1 else (False,)
-            for reverse in orientations:
-                entry = job[-1] if reverse else job[0]
-                try:
-                    path = router.shortest_path(position, (entry.x, entry.y))
-                    cost = sum(hypot(b[0] - a[0], b[1] - a[1]) for a, b in pairwise(path))
-                except RoutingError:
-                    cost = float("inf")
-                choices.append((cost, index, reverse))
-        _, index, reverse = min(choices, key=lambda item: (item[0], item[1], item[2]))
-        job = jobs.pop(index)
-        selected = tuple(reversed(job)) if reverse else job
-        ordered.extend(selected)
-        position = (selected[-1].x, selected[-1].y)
-
-    return tuple(
-        replace(waypoint, id=f"wp_{index:04d}", sequence=index)
-        for index, waypoint in enumerate(ordered, 1)
-    ), tuple(skipped)
+    """Compatibility facade for the canonical lane problem and greedy baseline."""
+    problem, skipped = build_lane_routing_problem(
+        plan, start_enu_m=start_enu_m, obstacles=obstacles)
+    solution = GreedyLaneRouter().solve(problem)
+    return solution.ordered_waypoints, (*skipped, *solution.skipped_point_ids)
 
 
 def _cheapest_insertion_index(waypoints: Sequence[Waypoint], candidate: Waypoint) -> int:

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>双无人机视频检测航线规划器</title><link rel="stylesheet" href="/styles.css?v=11"></head>
+<title>双无人机视频检测航线规划器</title><link rel="stylesheet" href="/styles.css?v=12"></head>
 <body><header><strong>双无人机视频检测航线规划器</strong><span id="coords">ENU 东向 0.0，北向 0.0</span><button id="plan">同时规划两架无人机</button></header>
 <main><aside>
   <section><h2>责任区与起点</h2>
@@ -10,10 +10,10 @@
     <button class="draw-region drone-2" data-drone="1">绘制无人机 2 责任区</button>
     <label>无人机 2 起点 ENU 东向 / 北向（米）<div><input id="home2-x" type="number" step=".1" value="153.4"><input id="home2-y" type="number" step=".1" value="67.2"></div></label>
   </section>
-  <section><h2>任务设置</h2><label>飞行高度（米）<input id="alt" type="number" value="30"></label><p>覆盖方式：往复式搜索</p><label>扫描线方向（0° 向北，90° 向东；留空自动优化）<input id="angle" type="number" placeholder="自动比较 0°～165°"></label><label>水平 / 垂直安全距离（米）<div><input id="hc" type="number" value="3"><input id="vc" type="number" value="2"></div></label></section>
+  <section><h2>任务设置</h2><label>飞行高度（米）<input id="alt" type="number" value="30"></label><label>基础覆盖生成方法<select id="generator"><option value="scanline_clipped">全局扫描线裁剪</option><option value="bcd">BCD 单元分解</option></select></label><p id="generator-help" class="hint">先生成覆盖全局的平行扫描线，再由搜索边界和建筑裁剪为 lane。</p><label>扫描线方向（0° 向北，90° 向东；留空自动优化）<input id="angle" type="number" placeholder="自动比较 0°～165°"></label><label>水平 / 垂直安全距离（米）<div><input id="hc" type="number" value="3"><input id="vc" type="number" value="2"></div></label></section>
   <section><h2>相机与目标模型</h2><label>水平 / 垂直视场角（度）<div><input id="hfov" type="number" value="60"><input id="vfov" type="number" value="45"></div></label><label>航向 / 旁向视野重叠率<div><input id="fo" type="number" step=".05" value=".3"><input id="so" type="number" step=".05" value=".3"></div></label><label>目标包络宽 / 长 / 高（米）<div class="three"><input id="target-width" type="number" step=".1" value="2.5"><input id="target-length" type="number" step=".1" value="6"><input id="target-height" type="number" step=".1" value="2.5"></div></label><label>画面边缘安全比例<input id="image-margin" type="number" step=".01" value=".05"></label></section>
   <section><h2>飞行设置</h2><label>视频分析采样率（赫兹）<input id="frequency" type="number" step=".5" value="2"></label><label>飞控途径点最大间距（米）<input id="control-spacing" type="number" min="1" step="1" value="10"></label><label>检测航线 / 连接航线速度（米/秒）<div><input id="lane-speed" type="number" step=".5" value="5"><input id="connector-speed" type="number" step=".5" value="4"></div></label><label>避障速度（米/秒）<input id="obstacle-speed" type="number" step=".5" value="2.5"></label></section>
   <section><h2>地图图层</h2><label><input type="checkbox" data-layer="background" checked> 航拍底图</label><label><input type="checkbox" data-layer="buildings" checked> 建筑及墙体</label><label><input type="checkbox" data-layer="coverage" checked> 有效检测视野</label><label><input type="checkbox" data-layer="patches"> 搜索网格</label><label><input type="checkbox" data-layer="route" checked> 双机航线</label><label><input type="checkbox" data-layer="waypoints"> 飞控途径点</label></section>
   <section><h2>同步回放</h2><button id="replay" disabled>逐步生成检测视野</button><label>回放速度<input id="speed" type="range" min="1" max="10" value="5"></label><p class="hint">回放时，有效 viewpoint 会沿航线依次出现并逐步覆盖责任区；建筑墙体遮挡部分不会显示。</p></section>
   <section id="summary"><h2>规划结果</h2><p>等待规划</p></section><section><h2>导出文件</h2><div id="exports"></div></section>
-</aside><div id="map"><svg id="canvas"></svg><div id="draw-tip"></div><div id="error"></div></div></main><script src="/app.js?v=16"></script></body></html>
+</aside><div id="map"><svg id="canvas"></svg><div id="draw-tip"></div><div id="error"></div></div></main><script src="/app.js?v=17"></script></body></html>

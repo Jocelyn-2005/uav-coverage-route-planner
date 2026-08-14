@@ -1,7 +1,13 @@
 import pytest
-from shapely.geometry import MultiPolygon, Polygon, box
+from shapely.geometry import MultiPolygon, Point, Polygon, box
 
 from coverage_planner.coverage import generate_capture_plan
+from coverage_planner.coverage.generators import (
+    BCDGenerator,
+    CoverageStructureGenerator,
+    ScanlineClippedGenerator,
+    decompose_boustrophedon_cells,
+)
 from coverage_planner.models.camera import CameraConfig
 
 
@@ -110,3 +116,42 @@ def test_same_input_produces_identical_plan() -> None:
     first = generate_capture_plan(box(-5, -8, 34, 27), **arguments)  # type: ignore[arg-type]
     second = generate_capture_plan(box(-5, -8, 34, 27), **arguments)  # type: ignore[arg-type]
     assert first == second
+
+
+def test_scanline_generator_preserves_existing_geometry_baseline() -> None:
+    generator: CoverageStructureGenerator = ScanlineClippedGenerator()
+    arguments = {
+        "camera": camera(),
+        "flight_altitude_m": 5,
+        "ground_elevation_m": 0,
+        "scan_direction_deg": 90,
+    }
+    assert generator.method == "scanline_clipped"
+    assert generator.generate(box(0, 0, 30, 30), **arguments) == generate_capture_plan(
+        box(0, 0, 30, 30), **arguments)  # type: ignore[arg-type]
+
+
+def test_bcd_splits_only_at_sweep_topology_changes() -> None:
+    u_shape = Polygon([
+        (0, 0), (10, 0), (10, 10), (7, 10),
+        (7, 3), (3, 3), (3, 10), (0, 10),
+    ])
+    cells = decompose_boustrophedon_cells(u_shape, scan_direction_deg=90)
+    assert len(cells) == 3
+    assert sum(cell.area for cell in cells) == pytest.approx(u_shape.area)
+    assert all(cell.intersection(other).area == pytest.approx(0)
+               for index, cell in enumerate(cells) for other in cells[index + 1:])
+
+
+def test_bcd_generator_uses_same_capture_plan_contract() -> None:
+    generator: CoverageStructureGenerator = BCDGenerator()
+    geometry = box(0, 0, 30, 30).difference(box(12, 8, 18, 22))
+    plan = generator.generate(
+        geometry, camera=camera(), flight_altitude_m=5,
+        ground_elevation_m=0, scan_direction_deg=90)
+    assert generator.method == "bcd"
+    assert plan.capture_waypoints
+    assert len({segment.scan_line_index for segment in plan.scan_segments}) == len(
+        plan.scan_segments)
+    assert all(geometry.covers(Point(waypoint.x, waypoint.y))
+               for waypoint in plan.capture_waypoints)
