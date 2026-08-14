@@ -21,6 +21,16 @@ class CalibrationError(ValueError):
 class CalibrationModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    content_bounds_px: tuple[float, float, float, float] | None = None
+
+    @model_validator(mode="after")
+    def validate_content_bounds(self) -> CalibrationModel:
+        if self.content_bounds_px is not None:
+            min_x, min_y, max_x, max_y = self.content_bounds_px
+            if min_x >= max_x or min_y >= max_y:
+                raise ValueError("content_bounds_px must have positive width and height")
+        return self
+
 
 class OriginScaleCalibration(CalibrationModel):
     mode: Literal["origin_scale"]
@@ -132,6 +142,20 @@ class MapCalibration:
     def enu_to_pixel(self, enu_m: Point2D) -> Point2D:
         result = self._enu_to_pixel @ np.array([*enu_m, 1.0])
         return float(result[0]), float(result[1])
+
+    def content_bounds_enu(self, image_size_px: tuple[int, int]) -> tuple[float, float, float, float]:
+        """Return the colored map-content bounds, or the full image when unspecified."""
+        width, height = image_size_px
+        self.validate_image_size(width, height)
+        bounds = self.config.content_bounds_px or (0.0, 0.0, width - 1.0, height - 1.0)
+        min_px_x, min_px_y, max_px_x, max_px_y = bounds
+        corners = tuple(self.pixel_to_enu(point) for point in (
+            (min_px_x, min_px_y), (max_px_x, min_px_y),
+            (min_px_x, max_px_y), (max_px_x, max_px_y)))
+        return (
+            min(point[0] for point in corners), min(point[1] for point in corners),
+            max(point[0] for point in corners), max(point[1] for point in corners),
+        )
 
     def validate_image_size(self, width_px: int, height_px: int) -> None:
         """Check dimensions declared by a bounds calibration against an image."""

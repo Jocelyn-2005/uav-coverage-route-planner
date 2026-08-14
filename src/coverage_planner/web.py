@@ -80,6 +80,7 @@ def map_data() -> dict[str, Any]:
         calibration.pixel_to_enu(point)
         for point in ((0.0, 0.0), (1919.0, 0.0), (0.0, 1079.0), (1919.0, 1079.0))
     ]
+    image_size = (1920, 1080)
     return {
         "world_name": semantic.world_name,
         "background": {
@@ -90,6 +91,7 @@ def map_data() -> dict[str, Any]:
                 max(point[0] for point in image_corners),
                 max(point[1] for point in image_corners),
             ],
+            "content_bounds": list(calibration.content_bounds_enu(image_size)),
         },
         "search_area": mapping(shape({"type":"Polygon","coordinates":[[*semantic.search_area.coords, semantic.search_area.coords[0]]]})),
         "buildings": [{
@@ -201,18 +203,29 @@ def _web_result(result: PlanResult, home: list[float]) -> dict[str, Any]:
             "minimum_required_coverage_ratio": result.minimum_required_coverage_ratio,
             "coverage_requirement_met": result.coverage_requirement_met,
             "unreachable": list(result.unreachable_patch_ids),
+            "unreachable_candidate_point_count": len(
+                result.unreachable_candidate_point_ids),
+            "uncovered_patch_count": len(result.unreachable_patch_ids),
+            "warnings": list(result.warnings),
             "scan_pattern": result.scan_pattern,
             "scan_direction_deg": result.scan_direction_deg,
             "path_length_m": result.path_length_m,
             "lane_count": len(result.continuous_flight.lanes),
             "flight_waypoint_count": len(result.continuous_flight.waypoints),
             "visibility_sample_count": result.continuous_flight.visibility_sample_count,
-            "strategy_comparison": [{
+            "initial_candidate_metrics": [{
                 "pattern": item.pattern, "coverage_ratio": item.coverage_ratio,
                 "planning_point_count": item.planning_point_count,
                 "path_length_m": item.path_length_m,
                 "unreachable_count": item.unreachable_patch_count,
             } for item in result.strategy_comparison],
+            "final_solution_metrics": {
+                "coverage_ratio": sum(
+                    p.area_m2*p.coverage_ratio for p in result.patches
+                ) / result.effective_area.geometry.area,
+                "path_length_m": result.path_length_m,
+                "uncovered_patch_count": len(result.unreachable_patch_ids),
+            },
             "home": home,
             "effective_area": mapping(result.effective_area.geometry),
             "visible_detection_area": mapping(result.visible_detection_geometry),

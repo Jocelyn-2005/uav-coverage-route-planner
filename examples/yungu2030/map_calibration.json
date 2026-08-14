@@ -1,5 +1,6 @@
 {
   "mode": "affine",
+  "content_bounds_px": [248.0, 37.0, 1782.0, 1074.0],
   "maximum_residual_m": 0.01,
   "control_points": [
     {

@@ -10,8 +10,13 @@
 - 示例数据有 43 个节点：25 栋建筑、14 个区域和 4 个交通设施；
 - 当前节点形状均为矩形，由 ENU 米制 `min_corner` 和 `max_corner` 描述；
 - 节点属性包括 `category`、`type`、`label`、`passability`、`visibility`、
-  `elevation_min_m` 和 `elevation_max_m`；
+  `elevation_min_m`、`elevation_max_m` 和可选的 `ground_contact`；
 - `metadata` 记录真值排除状态和源资产。
+
+`building_safety_overrides` 保存由视觉网格测得的保守 XY 外包范围和垂直高度区间。
+存在覆盖项时，飞行避障和建筑地面扣除均使用该安全体，而不是节点中较小的原始
+矩形。`ground_contact` 默认为 `true`；只有资产确实悬空且桥下地面仍需检测时才能
+设为 `false`。
 
 `excluded_search_regions` 用于保存人工确认的不可达、无需检测地面。每项包含唯一
 `id`、显示名称 `label`、排除原因 `reason` 和矩形 `shape`。这些区域会从每架无人机

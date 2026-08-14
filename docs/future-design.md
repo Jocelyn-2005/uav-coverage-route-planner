@@ -1,20 +1,18 @@
-# Future design (Stage 6)
+# 后续设计边界
 
-The following features are intentionally not implemented in version 0.1. They
-must extend the core geometry API without introducing ROS, PX4, or browser
-dependencies.
+以下能力不属于当前版本。未来扩展时应继续保持核心几何模块独立于 ROS、PX4 和
+浏览器实现。
 
-- Oblique cameras require ray/ground-plane projection, trapezoidal footprints,
-  attitude conventions, and explicit failure when rays do not meet the ground.
-- The current 2.5D rectangular-building shadow model should later be upgraded to
-  arbitrary 3D solids or meshes and explicit camera-ray tests. Facade coverage
-  is intentionally outside the ground-target mission.
-- GSD constraints should derive maximum above-ground altitude from sensor size,
-  focal length, and image dimensions; they must not silently change altitude.
-- Dynamic altitude and attitude require per-waypoint values and terrain data.
-- A flight-controller adapter should consume the v3 continuous-video JSON and
-  track the bounded-spacing ENU control points. The camera supplies a continuous
-  stream; `detection_enabled` controls whether detections count toward the task.
-- Visual recognition belongs downstream of planning and must not change the
-  deterministic geometric coverage model unless supplied through a separately
-  versioned policy.
+- 斜视相机需要实现视线与地平面的交点、梯形 footprint、完整姿态约定，以及视线
+  不与地面相交时的显式失败处理。
+- 当前采用 2.5D 矩形建筑阴影模型；未来可升级为任意三维实体或网格与逐射线遮挡
+  测试。建筑立面覆盖不属于当前地面目标检测任务。
+- GSD 约束应由传感器尺寸、焦距和图像尺寸推导最大离地高度，不能静默修改用户
+  指定的飞行高度。
+- 动态高度、动态姿态和地形跟随需要逐航点状态以及可信地形数据。
+- 下层飞控适配器应读取 v3 连续视频协议并跟踪有最大间距约束的 ENU 途径点；相机
+  始终提供连续视频，`detection_enabled` 仅控制检测结果是否计入任务。
+- 视觉识别属于规划器下游。除非通过独立版本化策略显式输入，否则识别模型不得
+  改变确定性的几何覆盖判定。
+- 运筹优化后续应加入完整任务成本的扫描方向评分、2-opt/Or-opt，以及小规模
+  MILP/GTSP 精确解对照和 optimality gap 报告。

@@ -78,12 +78,19 @@ def _summary(result: PlanResult) -> dict[str, object]:
       "minimum_required_coverage_ratio":result.minimum_required_coverage_ratio,
       "coverage_requirement_met":result.coverage_requirement_met,
       "scan_pattern":result.scan_pattern,
-      "strategy_comparison":[{
+      "optimization_method":"layered_deterministic_heuristic",
+      "initial_candidate_metrics":[{
           "pattern": item.pattern, "coverage_ratio": item.coverage_ratio,
           "planning_point_count": item.planning_point_count,
           "path_length_m": item.path_length_m,
           "unreachable_patch_count": item.unreachable_patch_count,
       } for item in result.strategy_comparison],
+      "final_solution_metrics": {
+          "coverage_ratio": covered/effective if effective else 0,
+          "path_length_m": result.path_length_m,
+          "flight_waypoint_count": len(result.continuous_flight.waypoints),
+          "uncovered_patch_count": len(result.unreachable_patch_ids),
+      },
       "deadhead_distance_m":noncoverage,
       "turn_count":max(0, len(result.continuous_flight.lanes)-1),
       "minimum_obstacle_clearance_m":result.minimum_obstacle_clearance_m,
@@ -93,6 +100,9 @@ def _summary(result: PlanResult) -> dict[str, object]:
       "return_home_length_m":segment_lengths.get("return_home", 0.0),
       "noncoverage_distance_ratio":noncoverage/result.path_length_m if result.path_length_m else 0.0,
       "visibility_sample_count":result.continuous_flight.visibility_sample_count,
+      "unreachable_candidate_point_count":len(result.unreachable_candidate_point_ids),
+      "unreachable_candidate_point_ids":list(result.unreachable_candidate_point_ids),
+      "uncovered_patch_count":len(result.unreachable_patch_ids),
       "unreachable_patch_ids":list(result.unreachable_patch_ids)}
 
 

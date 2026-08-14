@@ -24,7 +24,15 @@ svg{width:100%;height:100%}
 .route{fill:none;stroke:#1864ab;stroke-width:.55}
 .waypoint{fill:#111;stroke:#fff;stroke-width:.2}
 .transit{fill:#f08c00}
-.boundary{fill:none;stroke:#c92a2a;stroke-width:.8}
+.map-frame{fill:none;stroke:#c92a2a;stroke-width:1.1;pointer-events:none}
+.search-boundary{fill:none;stroke:#f4d35e;stroke-width:.65;stroke-dasharray:2 1;pointer-events:none}
+.map-reference{pointer-events:none}
+.axis-minor{stroke:#111;stroke-width:.55}
+.axis-major,.compass-line{stroke:#111;stroke-width:1.05}
+.axis-label{font-size:4.3px;fill:#111;paint-order:stroke;stroke:#fff;stroke-width:1.2px}
+.axis-title{font-size:4.6px;font-weight:700;fill:#111;paint-order:stroke;stroke:#fff;stroke-width:1.4px}
+.compass-arrow{fill:#c92a2a;stroke:#fff;stroke-width:.25}
+.map-label{font-size:5px;font-weight:700;fill:#111;paint-order:stroke;stroke:#fff;stroke-width:1.6px;stroke-linejoin:round}
 .home{fill:#ffb000;stroke:#fff;stroke-width:.5}
 .drone{fill:#ffb000;stroke:#111;stroke-width:.45}
 .captured-footprint{fill:#b9f6ca;fill-opacity:.18;stroke:#73d69a;stroke-opacity:.38;stroke-width:.14}

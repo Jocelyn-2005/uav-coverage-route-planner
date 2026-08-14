@@ -66,6 +66,8 @@ def test_real_overhead_map_calibration_and_overlay(tmp_path: Path) -> None:
     assert calibration.pixel_to_enu((1678.555, 89.75)) == pytest.approx(
         (305.0, 200.0), abs=1e-8
     )
+    assert calibration.content_bounds_enu((1920, 1080)) == pytest.approx(
+        (-4.5769314, -10.1975440, 327.3858472, 211.2653497), abs=1e-6)
     assert semantic_map_display_bounds(
         load_semantic_map(EXAMPLE),
         image_size_px=(1920, 1080),

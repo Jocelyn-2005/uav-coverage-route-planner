@@ -67,6 +67,7 @@ class PlanResult:
     planning_route: tuple[Waypoint, ...]
     obstacles: FlightObstacles
     scan_direction_deg: float
+    unreachable_candidate_point_ids: tuple[str, ...]
     unreachable_patch_ids: tuple[str, ...]
     warnings: tuple[str, ...]
     continuous_flight: ContinuousFlightPlan
@@ -195,14 +196,24 @@ class CoveragePlanner:
             evaluated = evaluate_patch_coverage(
                 patches, continuous_footprints,
                 minimum_coverage_ratio=minimum_coverage_ratio)
-        warnings = ([f"{len(skipped_point_ids)} coverage points are unreachable at the fixed altitude"]
-                    if skipped_point_ids else [])
         unreachable = tuple(p.id for p in evaluated if not p.covered)
         effective_area_m2 = effective.geometry.area
         covered_area_m2 = sum(p.area_m2 * p.coverage_ratio for p in evaluated)
         achieved_coverage_ratio = (
             covered_area_m2 / effective_area_m2 if effective_area_m2 else 0.0)
         coverage_requirement_met = achieved_coverage_ratio >= minimum_coverage_ratio
+        warnings = []
+        if skipped_point_ids:
+            if coverage_requirement_met:
+                warnings.append(
+                    f"{len(skipped_point_ids)} initial candidate coverage points were "
+                    "unreachable at the fixed altitude, but final ground coverage met "
+                    "the requirement; these points do not represent uncovered ground")
+            else:
+                warnings.append(
+                    f"{len(skipped_point_ids)} initial candidate coverage points were "
+                    "unreachable at the fixed altitude; refer to unreachable_patch_ids "
+                    "for ground that remains below the coverage requirement")
         if not coverage_requirement_met:
             warnings.append(
                 f"coverage ratio {achieved_coverage_ratio:.4f} is below required "
@@ -225,7 +236,8 @@ class CoveragePlanner:
                 for node in blocked_nodes)
             if blocked_nodes else None)
         return PlanResult(semantic_map, effective, evaluated, planning_route, obstacles,
-                          capture_plan.scan_direction_deg, unreachable, tuple(warnings),
+                          capture_plan.scan_direction_deg, skipped_point_ids, unreachable,
+                          tuple(warnings),
                           continuous_flight, visible_detection_geometry,
                           tuple(continuous_footprints.items()),
                           minimum_clearance,

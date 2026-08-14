@@ -40,6 +40,13 @@ def test_planner_exports_all_required_artifacts(tmp_path: Path) -> None:
     assert all({"heading_deg", "speed_mps"} <= waypoint.keys()
                for waypoint in flight["waypoints"])
     assert all(segment["speed_mps"] > 0 for segment in flight["route_segments"])
+    report=json.loads((tmp_path/"coverage_report.json").read_text())
+    assert report["optimization_method"] == "layered_deterministic_heuristic"
+    assert report["initial_candidate_metrics"]
+    assert report["final_solution_metrics"]["coverage_ratio"] == report["coverage_ratio"]
+    assert report["unreachable_candidate_point_count"] == len(
+        report["unreachable_candidate_point_ids"])
+    assert report["uncovered_patch_count"] == len(report["unreachable_patch_ids"])
 
 
 def test_planner_is_deterministic() -> None:
