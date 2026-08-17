@@ -6,6 +6,7 @@ vertical_clearance_m: 2.0
 allow_overflight_above_buildings: true
 scan_direction_deg: null
 coverage_generation_method: global_scanline
+route_optimization_method: auto
 minimum_coverage_ratio: 0.9999
 video_analysis_rate_hz: 2.0
 control_point_spacing_m: 10.0

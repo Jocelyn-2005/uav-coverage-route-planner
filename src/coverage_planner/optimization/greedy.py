@@ -7,8 +7,8 @@ from itertools import pairwise
 from coverage_planner.models.waypoint import Waypoint
 from coverage_planner.optimization.cost_matrix import LaneTransitionCostProvider
 from coverage_planner.optimization.problem import (
-    LaneRoutingProblem,
-    LaneRoutingSolution,
+    OptimizedRoute,
+    RouteOptimizationProblem,
     renumber_waypoints,
 )
 
@@ -18,7 +18,7 @@ class GreedyLaneRouter:
 
     method = "greedy_obstacle_distance"
 
-    def solve(self, problem: LaneRoutingProblem) -> LaneRoutingSolution:
+    def solve(self, problem: RouteOptimizationProblem) -> OptimizedRoute:
         remaining = list(enumerate(problem.jobs))
         costs = LaneTransitionCostProvider(problem)
         ordered: list[Waypoint] = []
@@ -51,7 +51,7 @@ class GreedyLaneRouter:
                 for left, right in pairwise(selected_state_indices))
         return_cost = (costs.state_to_depot_m(selected_state_indices[-1])
                        if selected_state_indices else 0.0)
-        return LaneRoutingSolution(
+        return OptimizedRoute(
             method=self.method,
             ordered_waypoints=renumber_waypoints(tuple(ordered)),
             job_order=tuple(job_order),

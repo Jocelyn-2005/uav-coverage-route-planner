@@ -42,4 +42,5 @@ def test_web_request_accepts_both_parallel_generators() -> None:
     assert PlanRequest.model_validate({
         **base, "coverage_generation_method": "global_scanline"})
     assert PlanRequest.model_validate({**base, "coverage_generation_method": "bcd"})
+    assert PlanRequest.model_validate({**base, "route_optimization_method": "two_opt"})
     assert PlanRequest.model_validate({**base, "scan_pattern": "scanline_clipped"})

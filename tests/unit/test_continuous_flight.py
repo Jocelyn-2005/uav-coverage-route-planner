@@ -84,7 +84,7 @@ def test_home_departure_is_a_connector() -> None:
     assert plan.route_segments[0].kind == "connector"
 
 
-def test_connector_does_not_capture_images() -> None:
+def test_connector_keeps_continuous_video_detection_enabled() -> None:
     route = (
         Waypoint("a", 1, "capture", 0, 0, 25, 0, -90, True, 0, 0),
         Waypoint("b", 2, "capture", 20, 0, 25, 0, -90, True, 1, 0),
@@ -93,8 +93,8 @@ def test_connector_does_not_capture_images() -> None:
         route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
         video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
         obstacle_speed_mps=2.5, return_speed_mps=4)
-    assert not plan.route_segments[0].detection_enabled
-    assert len(footprints) == 2
+    assert plan.route_segments[0].detection_enabled
+    assert len(footprints) > 2
 
 
 def test_coverage_lane_explicitly_enables_capture() -> None:
@@ -138,7 +138,7 @@ def test_marks_a_foldback_as_turn_in_place() -> None:
     assert plan.waypoints[1].hold_time_s == 0.5
 
 
-def test_connector_captures_only_when_it_contributes_to_requested_region() -> None:
+def test_connector_visibility_is_sampled_across_requested_region() -> None:
     route = (
         Waypoint("a", 1, "capture", 0, 0, 25, 0, -90, True, 0, 0),
         Waypoint("b", 2, "capture", 40, 0, 25, 0, -90, True, 1, 0),
@@ -149,4 +149,4 @@ def test_connector_captures_only_when_it_contributes_to_requested_region() -> No
         obstacle_speed_mps=2.5, return_speed_mps=4,
         capture_region=box(18, -1, 22, 1))
     assert plan.route_segments[0].detection_enabled
-    assert any("opportunistic" in identifier for identifier in footprints)
+    assert any("segment_0001_image" in identifier for identifier in footprints)

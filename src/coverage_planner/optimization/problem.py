@@ -9,19 +9,20 @@ from math import hypot
 from shapely import affinity
 from shapely.geometry import LineString, MultiLineString, Point
 
-from coverage_planner.coverage.scanlines import CapturePlan
+from coverage_planner.coverage.scanlines import CoveragePlan
 from coverage_planner.models.search_area import Polygonal
 from coverage_planner.models.waypoint import Waypoint
 
 
 @dataclass(frozen=True, slots=True)
-class LaneJob:
-    """One mandatory service lane with one or two executable orientations."""
+class CoverageLane:
+    """One generated coverage lane available in forward or reverse orientation."""
 
     id: str
     waypoints: tuple[Waypoint, ...]
     scan_line_index: int | None
     scan_segment_index: int | None
+    coverage_cell_index: int | None
 
     @property
     def orientations(self) -> tuple[tuple[Waypoint, ...], ...]:
@@ -36,17 +37,21 @@ class LaneJob:
 
 
 @dataclass(frozen=True, slots=True)
-class LaneRoutingProblem:
-    """Geometry-fixed combinatorial problem for lane ordering and orientation."""
+class RouteOptimizationProblem:
+    """Generated lanes plus start and obstacles for connection optimization."""
 
     start_enu_m: tuple[float, float]
-    jobs: tuple[LaneJob, ...]
+    coverage_lanes: tuple[CoverageLane, ...]
     obstacles: Polygonal
+
+    @property
+    def jobs(self) -> tuple[CoverageLane, ...]:
+        return self.coverage_lanes
 
 
 @dataclass(frozen=True, slots=True)
-class LaneRoutingSolution:
-    """A solver result before obstacle connectors are expanded into waypoints."""
+class OptimizedRoute:
+    """Ordered and oriented lanes before connectors become flight waypoints."""
 
     method: str
     ordered_waypoints: tuple[Waypoint, ...]
@@ -57,11 +62,16 @@ class LaneRoutingSolution:
     return_cost_m: float
 
 
-def build_lane_routing_problem(
-    plan: CapturePlan, *, start_enu_m: tuple[float, float], obstacles: Polygonal,
-) -> tuple[LaneRoutingProblem, tuple[str, ...]]:
-    """Clip dense scan samples into mandatory lane jobs without ordering them."""
-    jobs: list[LaneJob] = []
+LaneJob = CoverageLane
+LaneRoutingProblem = RouteOptimizationProblem
+LaneRoutingSolution = OptimizedRoute
+
+
+def build_route_optimization_problem(
+    plan: CoveragePlan, *, start_enu_m: tuple[float, float], obstacles: Polygonal,
+) -> tuple[RouteOptimizationProblem, tuple[str, ...]]:
+    """Convert generated lanes into the common connection-optimization input."""
+    lanes: list[CoverageLane] = []
     skipped: list[str] = []
     current_key: tuple[int | None, int | None] | None = None
     current: list[Waypoint] = []
@@ -74,7 +84,9 @@ def build_lane_routing_problem(
             if obstacles.covers(Point(current[0].x, current[0].y)):
                 skipped.append(current[0].id)
             else:
-                jobs.append(LaneJob(_job_id(len(jobs)), (current[0],), *key))
+                lanes.append(CoverageLane(
+                    _lane_id(len(lanes)), (current[0],), *key,
+                    current[0].coverage_cell_index))
             return
         source = LineString([(current[0].x, current[0].y), (current[-1].x, current[-1].y)])
         clipped = source.difference(obstacles)
@@ -94,7 +106,9 @@ def build_lane_routing_problem(
                 _move_waypoint(template, point)
                 for template, point in ((current[0], start), (current[-1], end))
             )
-            jobs.append(LaneJob(_job_id(len(jobs)), endpoints, *key))
+            lanes.append(CoverageLane(
+                _lane_id(len(lanes)), endpoints, *key,
+                current[0].coverage_cell_index))
 
     for waypoint in plan.capture_waypoints:
         key = (waypoint.scan_line_index, waypoint.scan_segment_index)
@@ -105,7 +119,9 @@ def build_lane_routing_problem(
             if obstacles.covers(Point(waypoint.x, waypoint.y)):
                 skipped.append(waypoint.id)
             else:
-                jobs.append(LaneJob(_job_id(len(jobs)), (waypoint,), None, None))
+                lanes.append(CoverageLane(
+                    _lane_id(len(lanes)), (waypoint,), None, None,
+                    waypoint.coverage_cell_index))
             continue
         if current and key != current_key:
             finish_job()
@@ -113,7 +129,10 @@ def build_lane_routing_problem(
         current_key = key
         current.append(waypoint)
     finish_job()
-    return LaneRoutingProblem(start_enu_m, tuple(jobs), obstacles), tuple(skipped)
+    return RouteOptimizationProblem(start_enu_m, tuple(lanes), obstacles), tuple(skipped)
+
+
+build_lane_routing_problem = build_route_optimization_problem
 
 
 def renumber_waypoints(waypoints: tuple[Waypoint, ...]) -> tuple[Waypoint, ...]:
@@ -132,5 +151,5 @@ def _move_waypoint(template: Waypoint, point: Point) -> Waypoint:
         template, x=float(point.x), y=float(point.y), camera_footprint_enu=footprint)
 
 
-def _job_id(index: int) -> str:
-    return f"lane_job_{index + 1:04d}"
+def _lane_id(index: int) -> str:
+    return f"coverage_lane_{index + 1:04d}"

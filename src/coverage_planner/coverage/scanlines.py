@@ -20,12 +20,23 @@ class ScanlinePlanningError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class CapturePlan:
-    """Capture-only coverage result before obstacle-aware route connection."""
+class CoveragePlan:
+    """Coverage lanes and their uniformly sampled reference waypoints."""
 
     scan_direction_deg: float
     scan_segments: tuple[ScanSegment, ...]
     capture_waypoints: tuple[Waypoint, ...]
+
+    @property
+    def coverage_lanes(self) -> tuple[ScanSegment, ...]:
+        return self.scan_segments
+
+    @property
+    def reference_waypoints(self) -> tuple[Waypoint, ...]:
+        return self.capture_waypoints
+
+
+CapturePlan = CoveragePlan
 
 
 def generate_capture_plan(
@@ -35,10 +46,10 @@ def generate_capture_plan(
     flight_altitude_m: float,
     ground_elevation_m: float,
     scan_direction_deg: float,
-) -> CapturePlan:
+) -> CoveragePlan:
     """Intersect parallel lines with free ground and sample each resulting segment."""
     if effective_geometry.is_empty:
-        return CapturePlan(scan_direction_deg % 360.0, (), ())
+        return CoveragePlan(scan_direction_deg % 360.0, (), ())
     if not effective_geometry.is_valid:
         raise ScanlinePlanningError("effective search geometry must be valid")
     dimensions = ground_footprint_dimensions(
@@ -74,10 +85,10 @@ def generate_capture_plan_on_scan_lines(
     ground_elevation_m: float,
     scan_direction_deg: float,
     scan_lines: Sequence[tuple[int, float]],
-) -> CapturePlan:
+) -> CoveragePlan:
     """Generate lanes on an existing rotated-coordinate scanline lattice."""
     if effective_geometry.is_empty:
-        return CapturePlan(scan_direction_deg % 360.0, (), ())
+        return CoveragePlan(scan_direction_deg % 360.0, (), ())
     if not effective_geometry.is_valid:
         raise ScanlinePlanningError("effective search geometry must be valid")
     dimensions = ground_footprint_dimensions(
@@ -152,7 +163,7 @@ def generate_capture_plan_on_scan_lines(
                 direction_yaw_deg=yaw_deg,
                 capture_waypoint_ids=tuple(ids),
             ))
-    return CapturePlan(direction_deg, tuple(segments), tuple(waypoints))
+    return CoveragePlan(direction_deg, tuple(segments), tuple(waypoints))
 
 
 def scan_line_lattice(

@@ -1,17 +1,17 @@
-# Coverage Generation × Route Optimization Benchmark
+# Coverage Generation × Route Optimization 项目内对比
 
 ## 1. 研究维度
 
-Benchmark 将 Coverage Generation 方法与 Route Optimization 算法正交比较：
+该对比用于项目内部选择配置和防止性能回归，不用于宣称提出新的算法。Coverage Generation 与 Route Optimization 按下表比较：
 
 | Coverage Generation | 原始顺序 | Greedy | 2-opt/Or-opt | 精确 GTSP/MILP |
 |---|---:|---:|---:|---:|
-| Global Scanline | 可生成 | 已实现 | 待实现 | 小实例待实现 |
-| Cellular Decomposition（BCD） | 可生成 | 已实现 | 待实现 | 小实例待实现 |
+| Global Scanline | 可生成 | 已实现 | 已实现 | 小实例已实现 |
+| Cellular Decomposition（BCD） | 可生成 | 已实现 | 已实现 | 小实例已实现 |
 
 两种 Coverage Generation 方法是平行的基础航点生成思路，不构成“基线—改进算法”
-关系。它们负责产生标准化 lane jobs；Route Optimization 只能读取统一的
-`LaneRoutingProblem` 和障碍转场成本矩阵，不能修改覆盖几何。这样才能保证算法
+关系。它们负责产生标准化 coverage lanes；Route Optimization 只能读取统一的
+`RouteOptimizationProblem` 和障碍转场成本矩阵，不能修改覆盖几何。这样才能保证算法
 比较使用相同的 lane、起点、安全净空和成本定义。
 
 ## 2. 实例层级
@@ -51,7 +51,7 @@ $$
 - `GlobalScanlineGenerator` 实现 Global Scanline 路线；
 - `BCDGenerator` 实现基于扫描拓扑事件的 cell 分解与 cell 内往复路线；
 - `LaneJob` 表示具有一个或两个执行方向的覆盖任务；
-- `LaneRoutingProblem` 是所有启发式和精确求解器的统一输入；
+- `RouteOptimizationProblem` 是所有启发式和精确求解器的统一输入；
 - `LaneTransitionCosts` 使用可见图最短路生成统一转场成本矩阵；
 - `GreedyLaneRouter` 重现当前障碍距离最近邻基线；
 - 两个生成器都已接入同一个 Greedy、避障连接、连续视野评估和飞控导出链路；

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from math import hypot
 
-from coverage_planner.optimization.problem import LaneRoutingProblem
+from coverage_planner.optimization.problem import RouteOptimizationProblem
 from coverage_planner.routing.visibility import RoutingError, VisibilityRouter
 
 
@@ -36,7 +36,7 @@ class LaneTransitionCosts:
 class LaneTransitionCostProvider:
     """Lazily cache the same obstacle costs used to materialize an exact matrix."""
 
-    def __init__(self, problem: LaneRoutingProblem) -> None:
+    def __init__(self, problem: RouteOptimizationProblem) -> None:
         self.problem = problem
         self.router = VisibilityRouter(problem.obstacles)
         self.states = _oriented_states(problem)
@@ -73,7 +73,7 @@ class LaneTransitionCostProvider:
         return self._to_depot[state_index]
 
 
-def build_transition_costs(problem: LaneRoutingProblem) -> LaneTransitionCosts:
+def build_transition_costs(problem: RouteOptimizationProblem) -> LaneTransitionCosts:
     provider = LaneTransitionCostProvider(problem)
     states = provider.states
     depot_to = tuple(provider.depot_to_state_m(index) for index in range(len(states)))
@@ -84,7 +84,7 @@ def build_transition_costs(problem: LaneRoutingProblem) -> LaneTransitionCosts:
     return LaneTransitionCosts(states, depot_to, between, to_depot)
 
 
-def _oriented_states(problem: LaneRoutingProblem) -> tuple[OrientedLaneState, ...]:
+def _oriented_states(problem: RouteOptimizationProblem) -> tuple[OrientedLaneState, ...]:
     return tuple(
         OrientedLaneState(
             job_index=job_index,

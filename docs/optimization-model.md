@@ -191,7 +191,7 @@ $$
 $$
 \min J=
 \alpha L_{\mathrm{total}}
-+\beta L_{\mathrm{deadhead}}
++\beta L_{\mathrm{transition}}
 +\gamma N_{\mathrm{turn}}
 +\delta T_{\mathrm{mission}}
 +\lambda\sum_{p\in P}A_pu_p
@@ -201,7 +201,7 @@ $$
 其中：
 
 - $L_{\mathrm{total}}$：总航程；
-- $L_{\mathrm{deadhead}}$：连接、避障与返航等非覆盖航程；
+- $L_{\mathrm{transition}}$：连接、避障与返航航程；这些航段仍保持视频检测，但通常包含更多重复观察；
 - $N_{\mathrm{turn}}$：转弯次数或角度加权转弯代价；
 - $T_{\mathrm{mission}}=\sum_e L_e/v_e$：估计任务时间；
 - $u_p$：未覆盖松弛量；

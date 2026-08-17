@@ -90,6 +90,9 @@ detection_enabled=true 时运行/采纳检测结果
 `coverage_generation_method` 记录 Coverage Generation 方法，当前为
 `global_scanline` 或 `bcd`；`route_optimization_method` 记录固定 lanes 之后采用的
 Route Optimization 方法。旧字段 `scan_pattern` 仅为向后兼容保留。
+`route_optimization_method` 可为 `greedy`、`two_opt`、`or_opt`、`heuristic`、
+`exact` 或 `auto`。`exact` 最多支持 12 条 coverage lanes；`auto` 根据规模选择。
+所有航段保持视频检测开启，任务不会在飞行中动态增加或修改航点。
 `unreachable_candidate_point_ids` 仅表示初始候选点无法安全到达，不等于漏检；
 最终仍低于覆盖要求的地面只由 `unreachable_patch_ids` 表示。下层系统判断任务是否
 可以执行时，应读取 `mission_status` 和最终覆盖指标，不能依据候选点数量自行否决。

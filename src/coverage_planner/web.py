@@ -18,6 +18,7 @@ from coverage_planner.io import load_semantic_map
 from coverage_planner.io.semantic_map import building_safety_elevations, building_safety_geometry
 from coverage_planner.models import CameraConfig
 from coverage_planner.multi_planner import DroneAssignment, TwoDroneCoveragePlanner
+from coverage_planner.optimization import RouteOptimizationMethod
 from coverage_planner.planner import CoveragePlanner, PlanResult
 from coverage_planner.reporting import export_multi_plan, export_plan
 
@@ -46,6 +47,7 @@ class PlanRequest(BaseModel):
     connector_speed_mps: float = Field(default=4.0, gt=0)
     obstacle_speed_mps: float = Field(default=2.5, gt=0)
     return_speed_mps: float = Field(default=4.0, gt=0)
+    route_optimization_method: RouteOptimizationMethod = "auto"
 
 
 class DroneRequest(BaseModel):
@@ -70,6 +72,7 @@ class DualPlanRequest(BaseModel):
     connector_speed_mps: float = Field(default=4.0, gt=0)
     obstacle_speed_mps: float = Field(default=2.5, gt=0)
     return_speed_mps: float = Field(default=4.0, gt=0)
+    route_optimization_method: RouteOptimizationMethod = "auto"
 
 
 def _request_generation_method(
@@ -145,6 +148,7 @@ def plan(request: PlanRequest) -> dict[str, Any]:
                 connector_speed_mps=request.connector_speed_mps,
                 obstacle_speed_mps=request.obstacle_speed_mps,
                 return_speed_mps=request.return_speed_mps,
+                route_optimization_method=request.route_optimization_method,
             )
             export_plan(result, RESULTS)
         return {"summary": _web_result(
@@ -183,6 +187,7 @@ def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
             "connector_speed_mps": request.connector_speed_mps,
             "obstacle_speed_mps": request.obstacle_speed_mps,
             "return_speed_mps": request.return_speed_mps,
+            "route_optimization_method": request.route_optimization_method,
         }
         with PLANNING_LOCK:
             result = TwoDroneCoveragePlanner().plan(
@@ -244,7 +249,14 @@ def _web_result(
             "warnings": list(result.warnings),
             "scan_pattern": result.scan_pattern,
             "coverage_generation_method": result.coverage_generation_method,
-            "route_optimization_method": "greedy_obstacle_distance",
+            "route_optimization_method": result.route_optimization_method,
+            "route_optimization_candidates": [{
+                "method": candidate.method,
+                "transition_distance_m": candidate.transition_cost_m,
+                "return_distance_m": candidate.return_cost_m,
+                "connection_distance_m": (
+                    candidate.transition_cost_m + candidate.return_cost_m),
+            } for candidate in result.route_optimization_candidates],
             "scan_direction_deg": result.scan_direction_deg,
             "path_length_m": result.path_length_m,
             "lane_count": len(result.continuous_flight.lanes),
@@ -278,6 +290,15 @@ def _web_result(
                     cell.representative_point().y,
                 ],
             } for index, cell in enumerate(coverage_cells)],
+            "completion_points": [{
+                "id": waypoint.id,
+                "x": waypoint.x,
+                "y": waypoint.y,
+                "z": waypoint.z,
+            } for waypoint in result.planning_route
+                if waypoint.capture
+                and waypoint.scan_line_index is None
+                and waypoint.scan_segment_index is None],
             "patches": [{"id":p.id,"geometry":mapping(p.geometry),"covered":p.covered,"ratio":p.coverage_ratio} for p in result.patches],
             "flight_waypoints": [{
                 "id": w.id, "x": w.x, "y": w.y, "z": w.z,

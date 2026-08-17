@@ -28,6 +28,7 @@ svg{width:100%;height:100%}
 .coverage-cell-label-bg{fill:#fff;fill-opacity:.92;stroke:#17202a;stroke-width:.35}
 .coverage-cell-label{font-size:4px;font-weight:700;fill:#17202a}
 .waypoint{fill:#111;stroke:#fff;stroke-width:.2}
+.completion-point{fill:#e03131;stroke:#fff;stroke-width:.7;vector-effect:non-scaling-stroke}
 .transit{fill:#f08c00}
 .map-frame{fill:none;stroke:#c92a2a;stroke-width:1.1;pointer-events:none}
 .search-boundary{fill:none;stroke:#f4d35e;stroke-width:.65;stroke-dasharray:2 1;pointer-events:none}
@@ -41,7 +42,6 @@ svg{width:100%;height:100%}
 .home{fill:#ffb000;stroke:#fff;stroke-width:.5}
 .drone{fill:#ffb000;stroke:#111;stroke-width:.45}
 .captured-footprint{fill:#b9f6ca;fill-opacity:.18;stroke:#73d69a;stroke-opacity:.38;stroke-width:.14}
-.travelled{fill:none;stroke:#ffb000;stroke-width:1.1}
 .draw-region{width:100%;margin:3px 0;padding:7px}.draw-region.drone-2{background:#e67700}
 .hint{color:#65717c}.valid-coverage{pointer-events:none}
 .viewpoint-coverage{pointer-events:none}

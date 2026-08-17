@@ -6,9 +6,6 @@ from dataclasses import replace
 from itertools import pairwise
 from math import acos, atan2, ceil, degrees, hypot
 
-from shapely import difference, intersection, unary_union
-from shapely.geometry import Polygon
-
 from coverage_planner.camera import ground_footprint_dimensions, ground_footprint_polygon
 from coverage_planner.models.camera import CameraConfig
 from coverage_planner.models.flight import (
@@ -77,13 +74,11 @@ def build_continuous_flight_plan(
             start_waypoint_id=commanded_waypoints[sequence - 1].id,
             end_waypoint_id=commanded_waypoints[sequence].id,
             heading_deg=heading, speed_mps=speed, length_m=length,
-            detection_enabled=kind == "coverage_lane",
+            detection_enabled=True,
             source_scan_line_index=end.scan_line_index if kind == "coverage_lane" else None,
             source_scan_segment_index=end.scan_segment_index if kind == "coverage_lane" else None,
             source_coverage_cell_index=(
                 end.coverage_cell_index if kind == "coverage_lane" else None)))
-        if kind != "coverage_lane":
-            continue
         temporal_spacing_m = speed / video_analysis_rate_hz
         spacing_m = min(temporal_spacing_m, maximum_capture_spacing_m)
         interval_count = max(1, ceil(length / spacing_m - 1e-12)) if length else 1
@@ -96,35 +91,6 @@ def build_continuous_flight_plan(
                 camera, point=point, flight_altitude_m=flight_altitude_m,
                 ground_elevation_m=ground_elevation_m, yaw_deg=heading,
                 semantic_map=semantic_map)
-
-    if capture_region is not None:
-        covered = unary_union(tuple(footprints.values())) if footprints else Polygon()
-        remaining = difference(
-            capture_region, covered, grid_size=_OVERLAY_GRID_SIZE_M)
-        for index, ((start, end), segment) in enumerate(zip(pairwise(route), segments, strict=True)):
-            if segment.kind == "coverage_lane" or remaining.is_empty:
-                continue
-            spacing_m = min(segment.speed_mps / video_analysis_rate_hz, maximum_capture_spacing_m)
-            interval_count = max(1, ceil(segment.length_m / spacing_m - 1e-12))
-            captured = False
-            for sample_index in range(interval_count + 1):
-                fraction = sample_index / interval_count
-                point = (start.x + fraction * (end.x - start.x),
-                         start.y + fraction * (end.y - start.y))
-                footprint = _detection_ground(
-                    camera, point=point, flight_altitude_m=flight_altitude_m,
-                    ground_elevation_m=ground_elevation_m, yaw_deg=segment.heading_deg,
-                    semantic_map=semantic_map)
-                overlap = intersection(
-                    footprint, remaining, grid_size=_OVERLAY_GRID_SIZE_M)
-                if overlap.area <= 1e-6:
-                    continue
-                footprints[f"{segment.id}_opportunistic_{sample_index:04d}"] = footprint
-                remaining = difference(
-                    remaining, footprint, grid_size=_OVERLAY_GRID_SIZE_M)
-                captured = True
-            if captured:
-                segments[index] = replace(segment, detection_enabled=True)
 
     covered_route_indices = {
         index

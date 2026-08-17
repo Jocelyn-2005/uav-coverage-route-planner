@@ -23,14 +23,14 @@ from coverage_planner.optimization import GreedyLaneRouter, build_lane_routing_p
 class DirectionScore:
     angle_deg: float
     path_length_m: float
-    deadhead_distance_m: float
+    transition_distance_m: float
     turn_count: int
     segment_count: int
     waypoint_count: int
 
     @property
     def ranking(self) -> tuple[float, float, int, int, int, float]:
-        return (self.path_length_m, self.deadhead_distance_m, self.turn_count,
+        return (self.path_length_m, self.transition_distance_m, self.turn_count,
                 self.segment_count, self.waypoint_count, self.angle_deg)
 
 
@@ -125,12 +125,12 @@ def _insertion_cost(waypoints: Sequence[Waypoint], candidate: Waypoint, index: i
 def _score(plan: CapturePlan) -> DirectionScore:
     points = plan.capture_waypoints
     path_length = sum(hypot(b.x - a.x, b.y - a.y) for a, b in pairwise(points))
-    deadhead = 0.0
+    transition = 0.0
     for a, b in pairwise(points):
         if (a.scan_line_index, a.scan_segment_index) != (b.scan_line_index, b.scan_segment_index):
-            deadhead += hypot(b.x - a.x, b.y - a.y)
+            transition += hypot(b.x - a.x, b.y - a.y)
     return DirectionScore(
         angle_deg=plan.scan_direction_deg, path_length_m=path_length,
-        deadhead_distance_m=deadhead, turn_count=max(0, len(plan.scan_segments) - 1),
+        transition_distance_m=transition, turn_count=max(0, len(plan.scan_segments) - 1),
         segment_count=len(plan.scan_segments), waypoint_count=len(points),
     )

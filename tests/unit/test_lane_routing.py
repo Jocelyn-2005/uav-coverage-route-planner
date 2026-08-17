@@ -10,6 +10,7 @@ from coverage_planner.optimization import (
     GreedyLaneRouter,
     build_lane_routing_problem,
     build_transition_costs,
+    optimize_route,
 )
 
 
@@ -47,11 +48,12 @@ def test_canonical_problem_separates_jobs_from_solver() -> None:
     problem, skipped = build_lane_routing_problem(
         plan, start_enu_m=(11, 0), obstacles=Polygon())
     assert skipped == ()
-    assert [job.id for job in problem.jobs] == ["lane_job_0001", "lane_job_0002"]
+    assert [lane.id for lane in problem.coverage_lanes] == [
+        "coverage_lane_0001", "coverage_lane_0002"]
     assert all(len(job.orientations) == 2 for job in problem.jobs)
     solution = GreedyLaneRouter().solve(problem)
     assert solution.method == "greedy_obstacle_distance"
-    assert solution.job_order == ("lane_job_0001", "lane_job_0002")
+    assert solution.job_order == ("coverage_lane_0001", "coverage_lane_0002")
     assert solution.orientation_indices == (1, 0)
     assert solution.transition_cost_m == 11
     assert solution.return_cost_m == pytest.approx(sqrt(101))
@@ -76,3 +78,19 @@ def test_transition_matrix_uses_same_oriented_lane_states_for_all_solvers() -> N
     assert costs.state_to_state_m[first_forward][first_reverse] == float("inf")
     assert costs.state_to_state_m[first_forward][second_forward] == pytest.approx(sqrt(200))
     assert costs.state_to_depot_m[second_forward] == pytest.approx(sqrt(200))
+
+
+@pytest.mark.parametrize("method", ["two_opt", "or_opt", "heuristic", "exact", "auto"])
+def test_route_optimizers_share_generated_lanes_and_costs(method: str) -> None:
+    plan = CapturePlan(90, (), (
+        point("a", 1, 0, 0, 0), point("b", 2, 10, 0, 0),
+        point("c", 3, 20, 10, 1), point("d", 4, 30, 10, 1),
+        point("e", 5, 0, 10, 2), point("f", 6, 10, 10, 2),
+    ))
+    problem, _ = build_lane_routing_problem(
+        plan, start_enu_m=(0, 0), obstacles=Polygon())
+    selected, candidates = optimize_route(problem, method=method)  # type: ignore[arg-type]
+    assert set(selected.job_order) == {lane.id for lane in problem.coverage_lanes}
+    assert len(selected.orientation_indices) == len(problem.coverage_lanes)
+    assert selected.transition_cost_m + selected.return_cost_m <= (
+        candidates[0].transition_cost_m + candidates[0].return_cost_m + 1e-9)

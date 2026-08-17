@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from shapely.geometry import LineString, box
+from shapely.geometry import LineString, Point, box
 
 from coverage_planner.models import CameraConfig, SemanticMap
 from coverage_planner.planner import CoveragePlanner
@@ -43,12 +43,15 @@ def test_planner_exports_all_required_artifacts(tmp_path: Path) -> None:
     assert all("source_coverage_cell_index" in segment
                for segment in flight["route_segments"])
     report=json.loads((tmp_path/"coverage_report.json").read_text())
-    assert report["optimization_method"] == "layered_deterministic_heuristic"
+    assert report["optimization_method"] == "coverage_generation_plus_route_optimization"
+    assert report["route_optimization_method"].startswith("auto:")
+    assert report["route_optimization_candidates"]
     assert report["initial_candidate_metrics"]
     assert report["final_solution_metrics"]["coverage_ratio"] == report["coverage_ratio"]
     assert report["unreachable_candidate_point_count"] == len(
         report["unreachable_candidate_point_ids"])
     assert report["uncovered_patch_count"] == len(report["unreachable_patch_ids"])
+    assert "unreachable_ground" in report
 
 
 def test_planner_is_deterministic() -> None:
@@ -98,3 +101,22 @@ def test_low_altitude_coverage_uses_only_reachable_captures() -> None:
     assert all(
         contributor.startswith("segment_")
         for patch in result.patches for contributor in patch.covered_by_waypoint_ids)
+
+
+def test_completion_observation_point_stays_in_safe_free_ground() -> None:
+    target = box(10.1, 8, 10.5, 9)
+    safe_ground = box(12, 0, 30, 20)
+    selected = CoveragePlanner._coverage_completion_point(
+        target,
+        safe_observation_geometry=safe_ground,
+        current_route=(),
+        camera=camera(),
+        flight_altitude_m=10,
+        ground_elevation_m=0,
+        yaw_deg=90,
+        semantic_map=semantic_map(),
+        effective_geometry=box(0, 0, 40, 30),
+    )
+    assert isinstance(selected, Point)
+    assert safe_ground.covers(selected)
+    assert selected.x >= 12

@@ -15,7 +15,7 @@ Coverage Generation（怎么保证扫全？）
   ├─ Global Scanline：全局铺扫描线，再由边界与障碍裁剪
   └─ Cellular Decomposition：先以 BCD 分解 cells，再生成 cell 内 lanes
                          ↓
-              标准化 LaneRoutingProblem
+              标准化 RouteOptimizationProblem
                          ↓
 Route Optimization（扫全以后怎么飞得更优？）
   └─ lane ordering + lane orientation + obstacle-aware transition cost
@@ -175,6 +175,7 @@ results/example_run/visualization.png
 项目并列提供两种 Coverage Generation 方法：`GlobalScanlineGenerator` 先生成全局平行
 扫描线，再由搜索边界、建筑和安全区裁剪成 lane；`BCDGenerator` 先在扫描拓扑发生
 分裂或合并的位置构造单调 cell，再在各 cell 内生成往复式 lane。二者不存在升级或
-替代关系，均转换为统一的 `LaneRoutingProblem`。Route Optimization 当前使用 Greedy
-完成 lane ordering 与 orientation，并共用避障连接和飞控
-导出。2-opt、Or-opt 和小规模精确 GTSP/MILP 仍是后续优化基线。
+替代关系，均输出统一的 `CoveragePlan`，再转换为 `RouteOptimizationProblem`。
+Route Optimization 可选择 Greedy、2-opt、Or-opt、组合启发式、小规模 Exact 或
+`auto` 自动校优，并共用避障连接和飞控导出。外部 YAML/JSON 使用
+`route_optimization_method` 控制。

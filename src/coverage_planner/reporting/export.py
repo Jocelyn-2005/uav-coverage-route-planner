@@ -65,9 +65,16 @@ def _summary(result: PlanResult) -> dict[str, object]:
     segment_lengths: dict[str, float] = {}
     for segment in result.continuous_flight.route_segments:
         segment_lengths[segment.kind] = segment_lengths.get(segment.kind, 0.0) + segment.length_m
-    noncoverage = sum(
+    transition_distance = sum(
         segment.length_m for segment in result.continuous_flight.route_segments
-        if not segment.detection_enabled)
+        if segment.kind != "coverage_lane")
+    exact = next((candidate for candidate in result.route_optimization_candidates
+                  if candidate.method == "exact"), None)
+    selected_connection = min(
+        (candidate.transition_cost_m + candidate.return_cost_m
+         for candidate in result.route_optimization_candidates), default=0.0)
+    exact_connection = (
+        exact.transition_cost_m + exact.return_cost_m if exact is not None else None)
     return {"flight_waypoint_count":len(result.continuous_flight.waypoints),
       "route_segment_count":len(result.continuous_flight.route_segments),
       "coverage_lane_count":len(result.continuous_flight.lanes),"path_length_m":result.path_length_m,
@@ -79,8 +86,17 @@ def _summary(result: PlanResult) -> dict[str, object]:
       "coverage_requirement_met":result.coverage_requirement_met,
       "scan_pattern":result.scan_pattern,
       "coverage_generation_method":result.coverage_generation_method,
-      "route_optimization_method":"greedy_obstacle_distance",
-      "optimization_method":"layered_deterministic_heuristic",
+      "route_optimization_method":result.route_optimization_method,
+      "optimization_method":"coverage_generation_plus_route_optimization",
+      "route_optimization_candidates":[{
+          "method": candidate.method,
+          "transition_distance_m": candidate.transition_cost_m,
+          "return_distance_m": candidate.return_cost_m,
+          "connection_distance_m": candidate.transition_cost_m + candidate.return_cost_m,
+      } for candidate in result.route_optimization_candidates],
+      "optimality_gap": (
+          (selected_connection - exact_connection) / exact_connection
+          if exact_connection not in {None, 0.0} else None),
       "initial_candidate_metrics":[{
           "pattern": item.pattern, "coverage_ratio": item.coverage_ratio,
           "planning_point_count": item.planning_point_count,
@@ -93,19 +109,26 @@ def _summary(result: PlanResult) -> dict[str, object]:
           "flight_waypoint_count": len(result.continuous_flight.waypoints),
           "uncovered_patch_count": len(result.unreachable_patch_ids),
       },
-      "deadhead_distance_m":noncoverage,
+      "transition_distance_m":transition_distance,
       "turn_count":max(0, len(result.continuous_flight.lanes)-1),
       "minimum_obstacle_clearance_m":result.minimum_obstacle_clearance_m,
       "coverage_lane_length_m":segment_lengths.get("coverage_lane", 0.0),
       "connector_length_m":segment_lengths.get("connector", 0.0),
       "obstacle_avoidance_length_m":segment_lengths.get("obstacle_avoidance", 0.0),
       "return_home_length_m":segment_lengths.get("return_home", 0.0),
-      "noncoverage_distance_ratio":noncoverage/result.path_length_m if result.path_length_m else 0.0,
+      "transition_distance_ratio":(
+          transition_distance/result.path_length_m if result.path_length_m else 0.0),
       "visibility_sample_count":result.continuous_flight.visibility_sample_count,
       "unreachable_candidate_point_count":len(result.unreachable_candidate_point_ids),
       "unreachable_candidate_point_ids":list(result.unreachable_candidate_point_ids),
       "uncovered_patch_count":len(result.unreachable_patch_ids),
-      "unreachable_patch_ids":list(result.unreachable_patch_ids)}
+      "unreachable_patch_ids":list(result.unreachable_patch_ids),
+      "unreachable_ground":[{
+          "geometry": mapping(item.geometry),
+          "area_m2": item.area_m2,
+          "patch_ids": list(item.patch_ids),
+          "reason": item.reason,
+      } for item in result.unreachable_ground]}
 
 
 def _flight_mission(result: PlanResult) -> dict[str, object]:
