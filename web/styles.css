@@ -28,7 +28,7 @@ svg{width:100%;height:100%}
 .coverage-cell-label-bg{fill:#fff;fill-opacity:.92;stroke:#17202a;stroke-width:.35}
 .coverage-cell-label{font-size:4px;font-weight:700;fill:#17202a}
 .waypoint{fill:#111;stroke:#fff;stroke-width:.2}
-.completion-point{fill:#e03131;stroke:#fff;stroke-width:.7;vector-effect:non-scaling-stroke}
+.completion-point{fill:#e03131;stroke:#fff;stroke-width:.45;vector-effect:non-scaling-stroke}
 .transit{fill:#f08c00}
 .map-frame{fill:none;stroke:#c92a2a;stroke-width:1.1;pointer-events:none}
 .search-boundary{fill:none;stroke:#f4d35e;stroke-width:.65;stroke-dasharray:2 1;pointer-events:none}

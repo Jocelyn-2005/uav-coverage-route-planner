@@ -11,8 +11,7 @@ from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, box
 from coverage_planner.camera import ground_footprint_dimensions
 from coverage_planner.coverage.scanlines import (
     CapturePlan,
-    generate_capture_plan_on_scan_lines,
-    scan_line_lattice,
+    generate_capture_plan,
 )
 from coverage_planner.models.camera import CameraConfig
 from coverage_planner.models.search_area import Polygonal
@@ -41,31 +40,20 @@ class BCDGenerator:
             ground_elevation_m=ground_elevation_m,
             scan_direction_deg=scan_direction_deg,
         )
-        lattice = scan_line_lattice(
-            geometry,
-            camera=camera,
-            flight_altitude_m=flight_altitude_m,
-            ground_elevation_m=ground_elevation_m,
-            scan_direction_deg=scan_direction_deg,
-        )
-
         waypoints: list[Waypoint] = []
         segments: list[ScanSegment] = []
-        segment_counts: dict[int, int] = {}
+        lane_index = 0
         for cell_index, cell in enumerate(cells):
-            cell_plan = generate_capture_plan_on_scan_lines(
+            cell_plan = generate_capture_plan(
                 cell,
                 camera=camera,
                 flight_altitude_m=flight_altitude_m,
                 ground_elevation_m=ground_elevation_m,
                 scan_direction_deg=scan_direction_deg,
-                scan_lines=lattice,
             )
             cell_waypoints = {
                 waypoint.id: waypoint for waypoint in cell_plan.capture_waypoints}
             for source_segment in cell_plan.scan_segments:
-                segment_index = segment_counts.get(source_segment.scan_line_index, 0)
-                segment_counts[source_segment.scan_line_index] = segment_index + 1
                 lane_waypoints = [
                     cell_waypoints[item]
                     for item in source_segment.capture_waypoint_ids
@@ -78,18 +66,20 @@ class BCDGenerator:
                         waypoint,
                         id=waypoint_id,
                         sequence=len(waypoints) + 1,
-                        scan_segment_index=segment_index,
+                        scan_line_index=lane_index,
+                        scan_segment_index=0,
                         coverage_cell_index=cell_index,
                     ))
                 segments.append(ScanSegment(
-                    scan_line_index=source_segment.scan_line_index,
-                    segment_index=segment_index,
+                    scan_line_index=lane_index,
+                    segment_index=0,
                     start_enu_m=source_segment.start_enu_m,
                     end_enu_m=source_segment.end_enu_m,
                     direction_yaw_deg=source_segment.direction_yaw_deg,
                     capture_waypoint_ids=tuple(ids),
                     coverage_cell_index=cell_index,
                 ))
+                lane_index += 1
         return CapturePlan(scan_direction_deg % 360.0, tuple(segments), tuple(waypoints))
 
 

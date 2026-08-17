@@ -99,7 +99,8 @@ def build_continuous_flight_plan(
         for index in (index, index + 1)
     }
     for index, waypoint in enumerate(route):
-        if not waypoint.capture or index in covered_route_indices:
+        if (not waypoint.capture
+                or (index in covered_route_indices and not waypoint.is_completion)):
             continue
         sample_id = f"segment_point_{index + 1:04d}_image_0000"
         footprints[sample_id] = _detection_ground(
@@ -206,6 +207,8 @@ def _segment_kind(start: Waypoint, end: Waypoint) -> SegmentKind:
         return "return_home"
     same_lane = (
         start.capture and end.capture
+        and start.scan_line_index is not None
+        and start.scan_segment_index is not None
         and start.scan_line_index == end.scan_line_index
         and start.scan_segment_index == end.scan_segment_index
     )

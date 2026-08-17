@@ -43,6 +43,19 @@ def test_heading_follows_flight_direction_and_connector_speed() -> None:
     assert plan.route_segments[0].speed_mps == 4
 
 
+def test_independent_completion_points_are_connectors() -> None:
+    route = (
+        Waypoint("a", 1, "capture", 0, 0, 25, 0, -90, True, is_completion=True),
+        Waypoint("b", 2, "capture", 1, 1, 25, 0, -90, True, is_completion=True),
+    )
+    plan, _ = build_continuous_flight_plan(
+        route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        obstacle_speed_mps=2.5, return_speed_mps=4)
+    assert plan.route_segments[0].kind == "connector"
+    assert not plan.lanes
+
+
 def test_dense_samples_are_replaced_by_uniform_control_points() -> None:
     route = tuple(Waypoint(
         str(index), index, "capture", 0, y, 25, 0, -90, True, 0, 0)
@@ -95,6 +108,20 @@ def test_connector_keeps_continuous_video_detection_enabled() -> None:
         obstacle_speed_mps=2.5, return_speed_mps=4)
     assert plan.route_segments[0].detection_enabled
     assert len(footprints) > 2
+
+
+def test_completion_point_adds_its_planned_stationary_view() -> None:
+    route = (
+        Waypoint("start", 0, "transit", 0, 0, 25, 0, -90, False),
+        Waypoint(
+            "completion", 1, "capture", 10, 0, 25, 90, -90, True,
+            is_completion=True),
+    )
+    _, footprints = build_continuous_flight_plan(
+        route, camera=camera(), flight_altitude_m=25, ground_elevation_m=0,
+        video_analysis_rate_hz=2, coverage_speed_mps=5, connector_speed_mps=4,
+        obstacle_speed_mps=2.5, return_speed_mps=4)
+    assert "segment_point_0002_image_0000" in footprints
 
 
 def test_coverage_lane_explicitly_enables_capture() -> None:

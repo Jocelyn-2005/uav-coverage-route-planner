@@ -94,3 +94,15 @@ def test_route_optimizers_share_generated_lanes_and_costs(method: str) -> None:
     assert len(selected.orientation_indices) == len(problem.coverage_lanes)
     assert selected.transition_cost_m + selected.return_cost_m <= (
         candidates[0].transition_cost_m + candidates[0].return_cost_m + 1e-9)
+
+
+@pytest.mark.parametrize("lane_count, expected", [(12, "auto:exact"), (13, "auto:heuristic")])
+def test_auto_uses_fixed_size_based_strategy(lane_count: int, expected: str) -> None:
+    waypoints = tuple(
+        point(f"p{index}", index + 1, index * 2.0, 0, index)
+        for index in range(lane_count)
+    )
+    problem, _ = build_lane_routing_problem(
+        CapturePlan(90, (), waypoints), start_enu_m=(0, 0), obstacles=Polygon())
+    selected, _ = optimize_route(problem, method="auto")
+    assert selected.method == expected

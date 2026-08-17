@@ -106,7 +106,8 @@ def route_reachable_waypoints(
         )
         result.append(replace(
             waypoint, id=identifier, sequence=index,
-            yaw_deg=_yaw((waypoint.x, waypoint.y), (next_point.x, next_point.y)),
+            yaw_deg=(waypoint.yaw_deg if waypoint.is_completion else
+                     _yaw((waypoint.x, waypoint.y), (next_point.x, next_point.y))),
         ))
     return tuple(result), tuple(skipped)
 

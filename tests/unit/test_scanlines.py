@@ -5,6 +5,7 @@ from coverage_planner.coverage import generate_capture_plan
 from coverage_planner.coverage.generators import (
     BCDGenerator,
     CoverageStructureGenerator,
+    GlobalScanlineGenerator,
     ScanlineClippedGenerator,
     build_boustrophedon_planning_cells,
     decompose_boustrophedon_cells,
@@ -170,6 +171,34 @@ def test_bcd_generator_uses_same_capture_plan_contract() -> None:
         for segment in plan.scan_segments
         if segment.coverage_cell_index is not None
     )
+
+
+def test_bcd_generates_independent_lawnmower_lanes_per_cell() -> None:
+    geometry = Polygon([
+        (0, 0), (30, 0), (30, 30), (22, 30),
+        (22, 10), (8, 10), (8, 30), (0, 30),
+    ])
+    arguments = {
+        "camera": camera(),
+        "flight_altitude_m": 5,
+        "ground_elevation_m": 0,
+        "scan_direction_deg": 90,
+    }
+    global_plan = GlobalScanlineGenerator().generate(
+        geometry, **arguments)  # type: ignore[arg-type]
+    bcd_plan = BCDGenerator().generate(
+        geometry, **arguments)  # type: ignore[arg-type]
+
+    def lane_geometry(plan: object) -> set[tuple[float, float, float, float]]:
+        return {
+            (*segment.start_enu_m, *segment.end_enu_m)
+            for segment in plan.scan_segments  # type: ignore[attr-defined]
+        }
+
+    assert lane_geometry(bcd_plan) != lane_geometry(global_plan)
+    assert len({segment.coverage_cell_index for segment in bcd_plan.scan_segments}) > 1
+    assert len({segment.scan_line_index for segment in bcd_plan.scan_segments}) == len(
+        bcd_plan.scan_segments)
 
 
 def test_small_bcd_cell_merges_into_adjacent_planning_cell() -> None:

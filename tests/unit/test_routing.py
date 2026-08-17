@@ -111,4 +111,14 @@ def test_closed_route_returns_to_start() -> None:
     assert (route[-1].x, route[-1].y) == (0, 0)
     assert route[-1].id == "wp_home_return"
     assert not route[-1].capture
+
+
+def test_completion_point_preserves_planned_camera_yaw() -> None:
+    start = Waypoint("start", 0, "transit", 0, 0, 30, 0, -90, False)
+    completion = Waypoint(
+        "completion", 1, "capture", 10, 0, 30, 135, -90, True,
+        is_completion=True)
+    route, skipped = route_reachable_waypoints(start, (completion,), box(4, 2, 6, 8))
+    assert skipped == ()
+    assert route[-1].yaw_deg == 135
 from itertools import pairwise

@@ -9,7 +9,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from shapely.geometry import LineString, box, mapping, shape
 
 from coverage_planner.coverage.generators import build_boustrophedon_planning_cells
@@ -18,7 +18,6 @@ from coverage_planner.io import load_semantic_map
 from coverage_planner.io.semantic_map import building_safety_elevations, building_safety_geometry
 from coverage_planner.models import CameraConfig
 from coverage_planner.multi_planner import DroneAssignment, TwoDroneCoveragePlanner
-from coverage_planner.optimization import RouteOptimizationMethod
 from coverage_planner.planner import CoveragePlanner, PlanResult
 from coverage_planner.reporting import export_multi_plan, export_plan
 
@@ -47,7 +46,14 @@ class PlanRequest(BaseModel):
     connector_speed_mps: float = Field(default=4.0, gt=0)
     obstacle_speed_mps: float = Field(default=2.5, gt=0)
     return_speed_mps: float = Field(default=4.0, gt=0)
-    route_optimization_method: RouteOptimizationMethod = "auto"
+    route_optimization_method: Literal["auto"] = "auto"
+
+    @field_validator("scan_direction_deg")
+    @classmethod
+    def validate_scan_direction(cls, value: float | None) -> float | None:
+        if value not in {None, 0.0, 90.0}:
+            raise ValueError("scan_direction_deg must be 0, 90, or null")
+        return value
 
 
 class DroneRequest(BaseModel):
@@ -72,7 +78,14 @@ class DualPlanRequest(BaseModel):
     connector_speed_mps: float = Field(default=4.0, gt=0)
     obstacle_speed_mps: float = Field(default=2.5, gt=0)
     return_speed_mps: float = Field(default=4.0, gt=0)
-    route_optimization_method: RouteOptimizationMethod = "auto"
+    route_optimization_method: Literal["auto"] = "auto"
+
+    @field_validator("scan_direction_deg")
+    @classmethod
+    def validate_scan_direction(cls, value: float | None) -> float | None:
+        if value not in {None, 0.0, 90.0}:
+            raise ValueError("scan_direction_deg must be 0, 90, or null")
+        return value
 
 
 def _request_generation_method(
@@ -296,9 +309,7 @@ def _web_result(
                 "y": waypoint.y,
                 "z": waypoint.z,
             } for waypoint in result.planning_route
-                if waypoint.capture
-                and waypoint.scan_line_index is None
-                and waypoint.scan_segment_index is None],
+                if waypoint.is_completion],
             "patches": [{"id":p.id,"geometry":mapping(p.geometry),"covered":p.covered,"ratio":p.coverage_ratio} for p in result.patches],
             "flight_waypoints": [{
                 "id": w.id, "x": w.x, "y": w.y, "z": w.z,

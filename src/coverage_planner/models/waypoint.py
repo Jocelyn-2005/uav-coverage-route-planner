@@ -25,6 +25,7 @@ class Waypoint:
     scan_segment_index: int | None = None
     camera_footprint_enu: Polygon | None = None
     coverage_cell_index: int | None = None
+    is_completion: bool = False
 
 
 @dataclass(frozen=True, slots=True)

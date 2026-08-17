@@ -36,7 +36,7 @@ class DirectionScore:
 
 def optimize_scan_direction(
     geometry: Polygonal, *, camera: CameraConfig, flight_altitude_m: float,
-    ground_elevation_m: float, candidate_angles_deg: Sequence[float] = tuple(range(0, 180, 15)),
+    ground_elevation_m: float, candidate_angles_deg: Sequence[float] = (0.0, 90.0),
     generator: CoverageStructureGenerator | None = None,
 ) -> tuple[CapturePlan, tuple[DirectionScore, ...]]:
     if not candidate_angles_deg:

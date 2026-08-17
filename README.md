@@ -176,6 +176,6 @@ results/example_run/visualization.png
 扫描线，再由搜索边界、建筑和安全区裁剪成 lane；`BCDGenerator` 先在扫描拓扑发生
 分裂或合并的位置构造单调 cell，再在各 cell 内生成往复式 lane。二者不存在升级或
 替代关系，均输出统一的 `CoveragePlan`，再转换为 `RouteOptimizationProblem`。
-Route Optimization 可选择 Greedy、2-opt、Or-opt、组合启发式、小规模 Exact 或
-`auto` 自动校优，并共用避障连接和飞控导出。外部 YAML/JSON 使用
-`route_optimization_method` 控制。
+Route Optimization 对外固定使用 `auto`：不超过 12 条 coverage lanes 时采用
+Exact；更大任务采用 Greedy 初始化后的 2-opt + Or-opt 组合启发式。扫描方向自动时
+只比较南北 0° 与东西 90°。内部求解器仍用于测试和算法对比。

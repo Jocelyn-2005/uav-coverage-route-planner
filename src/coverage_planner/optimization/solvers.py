@@ -17,7 +17,6 @@ from coverage_planner.optimization.problem import (
 
 RouteOptimizationMethod = Literal["greedy", "two_opt", "or_opt", "heuristic", "exact", "auto"]
 EXACT_LANE_LIMIT = 12
-LOCAL_SEARCH_LANE_LIMIT = 40
 LOCAL_SEARCH_MAX_PASSES = 4
 TWO_OPT_MAX_SPAN = 12
 
@@ -29,18 +28,19 @@ def optimize_route(
     greedy = GreedyLaneRouter().solve(problem)
     if method == "greedy":
         return greedy, (greedy,)
-    if method == "auto" and len(problem.coverage_lanes) > LOCAL_SEARCH_LANE_LIMIT:
-        return _with_method(greedy, "auto:greedy"), (greedy,)
     costs = build_transition_costs(problem)
     order = tuple(_job_indices(problem, greedy.job_order))
     candidates = [greedy]
+    if method == "auto" and len(problem.coverage_lanes) <= EXACT_LANE_LIMIT:
+        exact = _with_method(_exact_solution(problem, costs), "auto:exact")
+        return exact, (greedy, exact)
     if method in {"two_opt", "heuristic", "auto"}:
         order = _two_opt_order(problem, costs, order)
         candidates.append(_solution(problem, costs, order, "two_opt"))
     if method in {"or_opt", "heuristic", "auto"}:
         order = _or_opt_order(problem, costs, order)
         candidates.append(_solution(problem, costs, order, "or_opt"))
-    if method == "exact" or (method == "auto" and len(problem.coverage_lanes) <= EXACT_LANE_LIMIT):
+    if method == "exact":
         if len(problem.coverage_lanes) > EXACT_LANE_LIMIT:
             raise ValueError(
                 f"exact route optimization supports at most {EXACT_LANE_LIMIT} lanes")
@@ -49,7 +49,7 @@ def optimize_route(
     if method == "heuristic":
         selected = _with_method(selected, "heuristic")
     elif method == "auto":
-        selected = _with_method(selected, f"auto:{selected.method}")
+        selected = _with_method(selected, "auto:heuristic")
     return selected, tuple(candidates)
 
 

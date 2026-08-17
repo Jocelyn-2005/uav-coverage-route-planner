@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
 
-from shapely.geometry import LineString, Point, box
+from shapely import unary_union
+from shapely.geometry import LineString, Point, Polygon, box
 
-from coverage_planner.models import CameraConfig, SemanticMap
+from coverage_planner.models import CameraConfig, SemanticMap, Waypoint
 from coverage_planner.planner import CoveragePlanner
 from coverage_planner.reporting import export_plan
+from coverage_planner.visibility import visible_detection_ground
 
 
 def semantic_map() -> SemanticMap:
@@ -120,3 +122,74 @@ def test_completion_observation_point_stays_in_safe_free_ground() -> None:
     assert isinstance(selected, Point)
     assert safe_ground.covers(selected)
     assert selected.x >= 12
+
+
+def test_completion_observation_can_stand_outside_responsibility_area() -> None:
+    responsibility = box(0, 0, 2, 10)
+    selected = CoveragePlanner._coverage_completion_point(
+        box(0, 4, .2, 6),
+        safe_observation_geometry=box(-10, 0, -1, 10),
+        current_route=(),
+        camera=camera(),
+        flight_altitude_m=10,
+        ground_elevation_m=0,
+        yaw_deg=90,
+        semantic_map=semantic_map(),
+        effective_geometry=responsibility,
+    )
+    assert isinstance(selected, Point)
+    assert not responsibility.covers(selected)
+    assert selected.x < 0
+
+
+def test_completion_search_can_skip_an_already_attempted_position() -> None:
+    arguments = {
+        "safe_observation_geometry": box(-10, 0, 10, 10),
+        "current_route": (),
+        "camera": camera(),
+        "flight_altitude_m": 10,
+        "ground_elevation_m": 0,
+        "yaw_deg": 90,
+        "semantic_map": semantic_map(),
+        "effective_geometry": box(0, 0, 2, 10),
+    }
+    first = CoveragePlanner._coverage_completion_point(
+        box(0, 4, .2, 6), **arguments)
+    assert isinstance(first, Point)
+    second = CoveragePlanner._coverage_completion_point(
+        box(0, 4, .2, 6),
+        excluded_positions={(round(first.x, 6), round(first.y, 6))},
+        **arguments,
+    )
+    assert isinstance(second, Point)
+    assert (second.x, second.y) != (first.x, first.y)
+
+
+def test_one_completion_footprint_suppresses_adjacent_patch_candidate() -> None:
+    first_patch = box(0, 0, 1, 1)
+    adjacent_patch = box(1, 0, 2, 1)
+    selected = CoveragePlanner._coverage_completion_point(
+        first_patch,
+        safe_observation_geometry=box(-10, -10, 10, 10),
+        current_route=(), camera=camera(), flight_altitude_m=10,
+        ground_elevation_m=0, yaw_deg=90, semantic_map=semantic_map(),
+        effective_geometry=box(0, 0, 2, 1),
+    )
+    assert isinstance(selected, Point)
+    visibility = visible_detection_ground(
+        camera=camera(), center_enu_m=(selected.x, selected.y),
+        flight_altitude_m=10, ground_elevation_m=0, yaw_deg=90,
+        semantic_map=semantic_map(),
+    ).intersection(box(0, 0, 2, 1))
+    covered_geometry = unary_union((Polygon(), visibility))
+    assert adjacent_patch.difference(covered_geometry).is_empty
+
+
+def test_completion_insertion_cost_prefers_candidate_near_existing_route() -> None:
+    route = (
+        Waypoint("a", 1, "capture", 0, 0, 10, 0, -90, True),
+        Waypoint("b", 2, "capture", 0, 10, 10, 0, -90, True),
+    )
+    near = CoveragePlanner._minimum_insertion_cost(route, Point(1, 5))
+    far = CoveragePlanner._minimum_insertion_cost(route, Point(20, 5))
+    assert near < far

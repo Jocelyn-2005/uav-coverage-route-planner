@@ -112,7 +112,7 @@ def build_route_optimization_problem(
 
     for waypoint in plan.capture_waypoints:
         key = (waypoint.scan_line_index, waypoint.scan_segment_index)
-        if key == (None, None):
+        if waypoint.is_completion:
             finish_job()
             current = []
             current_key = None

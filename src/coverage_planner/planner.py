@@ -180,10 +180,10 @@ class CoveragePlanner:
         evaluated = evaluate_patch_coverage(
             patches, continuous_footprints, minimum_coverage_ratio=minimum_coverage_ratio
         )
-        safe_observation_geometry = effective.geometry.difference(
-            effective.building_exclusion_geometry.buffer(horizontal_clearance_m))
-        attempted_supplement_points: set[tuple[str, float, float]] = set()
-        for _ in range(6):
+        safe_observation_geometry = effective.map_geometry.difference(obstacles.geometry)
+        attempted_supplement_points: set[tuple[float, float]] = set()
+        completion_visibility_cache: dict[tuple[float, float], BaseGeometry] = {}
+        for _ in range(10):
             unresolved = [patch for patch in evaluated if not patch.covered]
             if not unresolved:
                 break
@@ -192,38 +192,64 @@ class CoveragePlanner:
                 unary_union(tuple(continuous_footprints.values()))
                 if continuous_footprints else Polygon())
             added = False
-            for patch in unresolved:
-                uncovered_geometry = patch.geometry.difference(covered_geometry)
-                if uncovered_geometry.is_empty:
-                    continue
-                point = self._coverage_completion_point(
-                    uncovered_geometry,
-                    safe_observation_geometry=safe_observation_geometry,
-                    current_route=planning_route,
-                    camera=camera,
-                    flight_altitude_m=flight_altitude_m,
-                    ground_elevation_m=ground_elevation_m,
-                    yaw_deg=capture_plan.scan_direction_deg,
-                    semantic_map=semantic_map,
-                    effective_geometry=effective.geometry,
-                )
-                if point is None:
-                    continue
-                attempt_key = (patch.id, round(point.x, 6), round(point.y, 6))
-                if attempt_key in attempted_supplement_points:
-                    continue
-                attempted_supplement_points.add(attempt_key)
+            while True:
+                uncovered_geometries = tuple(
+                    geometry for patch in unresolved
+                    if not (geometry := patch.geometry.difference(covered_geometry)).is_empty)
+                if not uncovered_geometries:
+                    break
+                total_uncovered = unary_union(uncovered_geometries)
+                choices: list[tuple[float, float, float, Point, BaseGeometry]] = []
+                candidate_positions: set[tuple[float, float]] = set()
+                for uncovered_geometry in uncovered_geometries:
+                    for point in self._coverage_completion_candidates(
+                            uncovered_geometry,
+                            safe_observation_geometry=safe_observation_geometry,
+                            camera=camera,
+                            flight_altitude_m=flight_altitude_m,
+                            ground_elevation_m=ground_elevation_m):
+                        position = (round(point.x, 6), round(point.y, 6))
+                        if (position in attempted_supplement_points
+                                or position in candidate_positions):
+                            continue
+                        candidate_positions.add(position)
+                        visibility = completion_visibility_cache.get(position)
+                        if visibility is None:
+                            visibility = visible_detection_ground(
+                                camera=camera, center_enu_m=(point.x, point.y),
+                                flight_altitude_m=flight_altitude_m,
+                                ground_elevation_m=ground_elevation_m,
+                                yaw_deg=capture_plan.scan_direction_deg,
+                                semantic_map=semantic_map,
+                            ).intersection(effective.geometry)
+                            completion_visibility_cache[position] = visibility
+                        gain = visibility.intersection(total_uncovered).area
+                        if gain <= 1e-6:
+                            continue
+                        insertion_cost = self._minimum_insertion_cost(
+                            planning_route, point)
+                        choices.append((
+                            gain / max(1.0, insertion_cost), gain,
+                            -insertion_cost, point, visibility))
+                if not choices:
+                    break
+                _, _, _, point, completion_visibility = max(
+                    choices, key=lambda item: item[:3])
+                attempted_supplement_points.add(
+                    (round(point.x, 6), round(point.y, 6)))
                 sample_id = f"wp_{len(supplemental_waypoints) + 1:04d}"
                 supplemental_waypoints.append(Waypoint(
                     id=sample_id, sequence=len(supplemental_waypoints) + 1,
                     kind="capture", x=point.x, y=point.y, z=flight_altitude_m,
                     yaw_deg=capture_plan.scan_direction_deg,
                     camera_pitch_deg=camera.pitch_deg, capture=True,
+                    is_completion=True,
                     camera_footprint_enu=ground_footprint_polygon(
                         camera, center_enu_m=(point.x, point.y),
                         flight_altitude_m=flight_altitude_m,
                         ground_elevation_m=ground_elevation_m,
                         yaw_deg=capture_plan.scan_direction_deg)))
+                covered_geometry = unary_union((covered_geometry, completion_visibility))
                 added = True
             if not added:
                 break
@@ -233,7 +259,7 @@ class CoveragePlanner:
                 self._optimize_coverage_route(
                     capture_plan, start_enu_m=(start[0], start[1]),
                     obstacles=obstacles.geometry,
-                    method=route_optimization_method))
+                    method="greedy"))
             planning_route, post_route_skipped = route_reachable_waypoints(
                 Waypoint("wp_start", 0, "transit", *start, 0, -90, False),
                 route_points, obstacles.geometry, return_to_start=return_to_start)
@@ -281,6 +307,42 @@ class CoveragePlanner:
                 return_speed_mps=return_speed_mps,
                 minimum_coverage_ratio=minimum_coverage_ratio,
             ))
+        for index in range(len(planning_route) - 2, 0, -1):
+            previous = planning_route[index - 1]
+            tip = planning_route[index]
+            following = planning_route[index + 1]
+            detour_length = (
+                hypot(tip.x - previous.x, tip.y - previous.y)
+                + hypot(following.x - tip.x, following.y - tip.y)
+            )
+            shortcut_length = hypot(
+                following.x - previous.x, following.y - previous.y)
+            if detour_length < 4.0 or shortcut_length > detour_length * 0.3:
+                continue
+            shortcut = LineString([
+                (previous.x, previous.y), (following.x, following.y)])
+            if shortcut.relate(obstacles.geometry)[0] != "F":
+                continue
+            candidate_route = planning_route[:index] + planning_route[index + 1:]
+            candidate_flight, candidate_footprints = build_continuous_flight_plan(
+                candidate_route, camera=camera, flight_altitude_m=flight_altitude_m,
+                ground_elevation_m=ground_elevation_m,
+                video_analysis_rate_hz=video_analysis_rate_hz,
+                control_point_spacing_m=control_point_spacing_m,
+                coverage_speed_mps=coverage_speed_mps,
+                connector_speed_mps=connector_speed_mps,
+                obstacle_speed_mps=obstacle_speed_mps,
+                return_speed_mps=return_speed_mps, capture_region=effective.geometry,
+                semantic_map=semantic_map)
+            candidate_evaluated = evaluate_patch_coverage(
+                patches, candidate_footprints,
+                minimum_coverage_ratio=minimum_coverage_ratio)
+            if any(not patch.covered for patch in candidate_evaluated):
+                continue
+            planning_route = candidate_route
+            continuous_flight = candidate_flight
+            continuous_footprints = candidate_footprints
+            evaluated = candidate_evaluated
         unreachable = tuple(p.id for p in evaluated if not p.covered)
         unreachable_ground = self._unreachable_ground(
             evaluated, continuous_footprints, obstacles.geometry)
@@ -506,7 +568,53 @@ class CoveragePlanner:
         return tuple(output)
 
     @staticmethod
+    def _coverage_completion_candidates(
+        uncovered_geometry: BaseGeometry,
+        *,
+        safe_observation_geometry: BaseGeometry,
+        camera: CameraConfig,
+        flight_altitude_m: float,
+        ground_elevation_m: float,
+    ) -> tuple[Point, ...]:
+        if safe_observation_geometry.is_empty:
+            return ()
+        target = uncovered_geometry.representative_point()
+        dimensions = ground_footprint_dimensions(
+            camera, flight_altitude_m=flight_altitude_m,
+            ground_elevation_m=ground_elevation_m)
+        half_width = dimensions.width_m / 2.0
+        half_length = dimensions.length_m / 2.0
+        offsets_x = (-half_width, 0.0, half_width)
+        offsets_y = (-half_length, 0.0, half_length)
+        candidates = (
+            nearest_points(
+                Point(target.x + dx, target.y + dy), safe_observation_geometry)[1]
+            for dx in offsets_x for dy in offsets_y
+        )
+        unique = {
+            (round(point.x, 6), round(point.y, 6)): point
+            for point in candidates if safe_observation_geometry.covers(point)
+        }
+        return tuple(unique.values())
+
+    @staticmethod
+    def _minimum_insertion_cost(
+        route: tuple[Waypoint, ...], point: Point,
+    ) -> float:
+        if not route:
+            return 0.0
+        if len(route) == 1:
+            return 2.0 * hypot(point.x - route[0].x, point.y - route[0].y)
+        return min(
+            hypot(point.x - left.x, point.y - left.y)
+            + hypot(right.x - point.x, right.y - point.y)
+            - hypot(right.x - left.x, right.y - left.y)
+            for left, right in pairwise(route)
+        )
+
+    @classmethod
     def _coverage_completion_point(
+        cls,
         uncovered_geometry: BaseGeometry,
         *,
         safe_observation_geometry: BaseGeometry,
@@ -517,19 +625,14 @@ class CoveragePlanner:
         yaw_deg: float,
         semantic_map: SemanticMap,
         effective_geometry: Polygonal,
+        excluded_positions: set[tuple[float, float]] | None = None,
     ) -> Point | None:
-        if safe_observation_geometry.is_empty:
-            return None
-        target = uncovered_geometry.representative_point()
-        nearest = nearest_points(target, safe_observation_geometry)[1]
-        candidates = [nearest]
-        dimensions = ground_footprint_dimensions(
-            camera, flight_altitude_m=flight_altitude_m,
+        candidates = cls._coverage_completion_candidates(
+            uncovered_geometry,
+            safe_observation_geometry=safe_observation_geometry,
+            camera=camera,
+            flight_altitude_m=flight_altitude_m,
             ground_elevation_m=ground_elevation_m)
-        radius = min(dimensions.width_m, dimensions.length_m) / 2.0
-        for dx, dy in ((radius, 0.0), (-radius, 0.0), (0.0, radius), (0.0, -radius)):
-            sample = Point(target.x + dx, target.y + dy)
-            candidates.append(nearest_points(sample, safe_observation_geometry)[1])
 
         def score(point: Point) -> tuple[float, float]:
             visible = visible_detection_ground(
@@ -543,8 +646,13 @@ class CoveragePlanner:
                  for waypoint in current_route), default=0.0)
             return gain, -connection
 
-        usable = [point for point in candidates
-                  if safe_observation_geometry.covers(point)]
+        usable_by_position = {
+            (round(point.x, 6), round(point.y, 6)): point
+            for point in candidates
+        }
+        for position in excluded_positions or ():
+            usable_by_position.pop(position, None)
+        usable = list(usable_by_position.values())
         if not usable:
             return None
         selected = max(usable, key=score)
@@ -584,7 +692,74 @@ class CoveragePlanner:
     ]:
         completion_ids = [
             waypoint.id for waypoint in capture_plan.capture_waypoints
-            if waypoint.scan_line_index is None and waypoint.scan_segment_index is None]
+            if waypoint.is_completion]
+        completion_waypoints = {
+            waypoint.id: waypoint for waypoint in capture_plan.capture_waypoints
+            if waypoint.is_completion
+        }
+        completion_visibility = {
+            identifier: visible_detection_ground(
+                camera=camera, center_enu_m=(waypoint.x, waypoint.y),
+                flight_altitude_m=flight_altitude_m,
+                ground_elevation_m=ground_elevation_m, yaw_deg=waypoint.yaw_deg,
+                semantic_map=semantic_map,
+            ).intersection(effective_geometry)
+            for identifier, waypoint in completion_waypoints.items()
+        }
+        retained_completion_ids = list(completion_ids)
+        for identifier in reversed(completion_ids):
+            others = [completion_visibility[item]
+                      for item in retained_completion_ids if item != identifier]
+            if not others:
+                continue
+            unique_visibility = completion_visibility[identifier].difference(
+                unary_union(tuple(others)))
+            if unique_visibility.area > 1e-6:
+                continue
+            retained_completion_ids.remove(identifier)
+        if len(retained_completion_ids) != len(completion_ids):
+            original_state = (
+                capture_plan, planning_route, skipped_point_ids, route_solution,
+                route_candidates, continuous_flight, continuous_footprints, evaluated)
+            retained = set(retained_completion_ids)
+            capture_plan = replace(
+                capture_plan,
+                capture_waypoints=tuple(
+                    waypoint for waypoint in capture_plan.capture_waypoints
+                    if not waypoint.is_completion or waypoint.id in retained),
+            )
+            route_points, candidate_skipped, route_solution, route_candidates = (
+                self._optimize_coverage_route(
+                    capture_plan, start_enu_m=(start[0], start[1]),
+                    obstacles=obstacle_geometry, method="greedy"))
+            planning_route, route_skipped = route_reachable_waypoints(
+                Waypoint("wp_start", 0, "transit", *start, 0, -90, False),
+                route_points, obstacle_geometry, return_to_start=return_to_start)
+            skipped_point_ids = tuple(dict.fromkeys(
+                (*skipped_point_ids, *candidate_skipped, *route_skipped)))
+            continuous_flight, continuous_footprints = build_continuous_flight_plan(
+                planning_route, camera=camera, flight_altitude_m=flight_altitude_m,
+                ground_elevation_m=ground_elevation_m,
+                video_analysis_rate_hz=video_analysis_rate_hz,
+                control_point_spacing_m=control_point_spacing_m,
+                coverage_speed_mps=coverage_speed_mps,
+                connector_speed_mps=connector_speed_mps,
+                obstacle_speed_mps=obstacle_speed_mps,
+                return_speed_mps=return_speed_mps, capture_region=effective_geometry,
+                semantic_map=semantic_map)
+            evaluated = evaluate_patch_coverage(
+                patches, continuous_footprints,
+                minimum_coverage_ratio=minimum_coverage_ratio)
+            if any(not patch.covered for patch in evaluated):
+                (capture_plan, planning_route, skipped_point_ids, route_solution,
+                 route_candidates, continuous_flight, continuous_footprints,
+                 evaluated) = original_state
+                retained_completion_ids = completion_ids
+        completion_ids = retained_completion_ids
+        if len(completion_ids) > 12:
+            return (
+                capture_plan, planning_route, skipped_point_ids, route_solution,
+                route_candidates, continuous_flight, continuous_footprints, evaluated)
         for identifier in completion_ids:
             candidate_plan = replace(
                 capture_plan,
