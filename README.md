@@ -1,10 +1,7 @@
 # 无人机全覆盖航道生成与路径优化器
 
-`coverage-search-planner`（展示名称：Coverage Generation and Route Optimization
-Planner）是一个面向无人机园区连续视频检测任务的纯 Python 规划器。目标物是地面上
-静止的人和车辆；识别算法本身不在本仓库范围内。理想检测模型规定：目标完整进入
-相机有效视野一次，即认为可检测。规划采用 2.5D 几何：目标位于地面，相机在固定
-高度飞行，建筑高度和墙面会遮挡其后的地面。
+Coverage Generation and Route Optimization Planner）是一个面向无人机园区连续视频检测任务的纯 Python 规划器。目标物是地面上
+静止的人和车辆；识别算法本身不在本仓库范围内。理想检测模型规定：目标完整进入相机有效视野一次，即认为可检测。规划采用 2.5D 几何：目标位于地面，相机在固定高度飞行，建筑高度和墙面会遮挡其后的地面。
 
 项目使用本地 ENU 米制坐标，不依赖 ROS、PX4、Gazebo、MAVROS 或 YOLO。规划结果通过版本化 JSON/YAML 协议交给下层飞控适配器。
 
