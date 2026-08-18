@@ -87,6 +87,7 @@ def _summary(result: PlanResult) -> dict[str, object]:
       "scan_pattern":result.scan_pattern,
       "coverage_generation_method":result.coverage_generation_method,
       "route_optimization_method":result.route_optimization_method,
+      "completion_strategy":result.completion_strategy,
       "optimization_method":"coverage_generation_plus_route_optimization",
       "route_optimization_candidates":[{
           "method": candidate.method,

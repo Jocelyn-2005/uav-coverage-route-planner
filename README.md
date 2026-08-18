@@ -48,6 +48,7 @@ uv run uvicorn coverage_planner.web:app --host 127.0.0.1 --port 8000
 
 - 分别绘制两架无人机互不重叠的责任区并调整各自起降点；
 - 在 Global Scanline 与 Cellular Decomposition（BCD）之间选择 Coverage Generation 方法；
+- 默认使用 Local insertion 完成覆盖补全，并可切换 Full Greedy 进行对照；
 - 配置 sweep direction（可留空自动优化）和建筑安全距离；
 - 配置相机视场角、目标包络、画面边缘余量和视频分析采样率；
 - 配置覆盖、连接、避障速度和飞控途径点最大间距；
@@ -88,7 +89,8 @@ results/example_run/visualization.png
 | 规划配置 | `planner_config.yaml` | 起点、高度、相机、重叠率、安全距离、速度和采样参数 |
 
 配置字段 `coverage_generation_method` 选择 `global_scanline` 或 `bcd`；字段
-`scan_pattern` 仅作为旧版本兼容入口，不应再用于新实验配置。
+`completion_strategy` 默认为 `local_insertion`，可显式设为 `full_greedy`；字段
+`scan_pattern` 仅作为旧版本兼容入口，不应再用于新配置。
 
 核心坐标约定：
 
@@ -159,6 +161,12 @@ results/example_run/visualization.png
 
 当前 Route Optimization 决定 lane 的访问顺序和正反方向，以障碍感知的连接距离与返航距离为优化目标。覆盖率、安全净空和任务闭合属于硬约束。任务时间、重复覆盖、转弯和能耗等多目标联合优化不属于当前实现。
 
+最终连续视野复核发现残余漏扫时，默认采用 `local_insertion`：保持主 coverage lanes
+的顺序和方向不变，只在 lane 边界按障碍感知的最小航程增量插入补全点。该策略避免
+补全阶段反复重排整条路线，主要用于降低完整任务的规划时间。`full_greedy` 保留为
+可选对照，会在加入补全点后重新组织全部任务点，计算成本通常更高。两种策略均执行
+安全连接重建和最终逐 patch 覆盖验收，选择默认策略不改变覆盖判定标准。
+
 - [问题定义与数学模型](docs/optimization-model.md)
 - [几何与优化算法设计](docs/algorithm-design.md)
 - [Coverage Generation × Route Optimization Benchmark](docs/benchmark-design.md)
@@ -175,4 +183,5 @@ results/example_run/visualization.png
 替代关系，均输出统一的 `CoveragePlan`，再转换为 `RouteOptimizationProblem`。
 Route Optimization 对外固定使用 `auto`：不超过 12 条 coverage lanes 时采用
 Exact；更大任务采用 Greedy 初始化后的 2-opt + Or-opt 组合启发式。扫描方向自动时
-只比较南北 0° 与东西 90°。内部求解器仍用于测试和算法对比。
+只比较南北 0° 与东西 90°。Coverage Completion 默认采用 `local_insertion`；
+`full_greedy` 仅作为显式选择的高成本对照。内部求解器仍用于测试和算法对比。

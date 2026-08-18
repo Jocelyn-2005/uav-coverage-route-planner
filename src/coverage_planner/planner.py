@@ -44,9 +44,11 @@ from coverage_planner.routing import (
     route_reachable_waypoints,
     select_flight_obstacles,
 )
+from coverage_planner.routing.visibility import RoutingError, VisibilityRouter
 from coverage_planner.visibility import visible_detection_ground
 
 _MINIMUM_COMPLETION_SEPARATION_M = 2.0
+CompletionStrategy = Literal["full_greedy", "local_insertion"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +106,7 @@ class PlanResult:
         """Canonical name for the geometry method; scan_pattern is legacy output."""
         return self.scan_pattern
     strategy_comparison: tuple[StrategyMetrics, ...] = ()
+    completion_strategy: CompletionStrategy = "local_insertion"
 
     @property
     def path_length_m(self) -> float:
@@ -128,7 +131,10 @@ class CoveragePlanner:
         obstacle_speed_mps: float = 2.5,
         return_speed_mps: float = 4.0,
         route_optimization_method: RouteOptimizationMethod = "auto",
+        completion_strategy: CompletionStrategy = "local_insertion",
     ) -> PlanResult:
+        if completion_strategy not in {"full_greedy", "local_insertion"}:
+            raise ValueError(f"unsupported completion strategy: {completion_strategy}")
         effective = build_effective_search_area(semantic_map, search_geometry)
         dimensions = ground_footprint_dimensions(camera, flight_altitude_m=flight_altitude_m,
                                                   ground_elevation_m=ground_elevation_m)
@@ -169,6 +175,7 @@ class CoveragePlanner:
         skipped_point_ids = chosen.skipped_point_ids
         route_solution = chosen.route_solution
         route_candidates = chosen.route_candidates
+        service_route = route_solution.ordered_waypoints
         continuous_flight, continuous_footprints = build_continuous_flight_plan(
             planning_route, camera=camera, flight_altitude_m=flight_altitude_m,
             ground_elevation_m=ground_elevation_m,
@@ -262,13 +269,28 @@ class CoveragePlanner:
                 added = True
             if not added:
                 break
+            previous_waypoint_count = len(capture_plan.capture_waypoints)
             capture_plan = replace(
                 capture_plan, capture_waypoints=tuple(supplemental_waypoints))
-            route_points, post_skipped, route_solution, route_candidates = (
-                self._optimize_coverage_route(
-                    capture_plan, start_enu_m=(start[0], start[1]),
+            if completion_strategy == "full_greedy":
+                route_points, post_skipped, route_solution, route_candidates = (
+                    self._optimize_coverage_route(
+                        capture_plan, start_enu_m=(start[0], start[1]),
+                        obstacles=obstacles.geometry,
+                        method="greedy"))
+                service_route = route_points
+            else:
+                new_completion_points = tuple(
+                    supplemental_waypoints[previous_waypoint_count:])
+                service_route = self._insert_completion_points_locally(
+                    service_route,
+                    new_completion_points,
+                    start_enu_m=(start[0], start[1]),
                     obstacles=obstacles.geometry,
-                    method="greedy"))
+                    return_to_start=return_to_start,
+                )
+                route_points = service_route
+                post_skipped = ()
             planning_route, post_route_skipped = route_reachable_waypoints(
                 Waypoint("wp_start", 0, "transit", *start, 0, -90, False),
                 route_points, obstacles.geometry, return_to_start=return_to_start)
@@ -287,39 +309,42 @@ class CoveragePlanner:
             evaluated = evaluate_patch_coverage(
                 patches, continuous_footprints,
                 minimum_coverage_ratio=minimum_coverage_ratio)
-        (capture_plan, planning_route, skipped_point_ids, route_solution,
-         route_candidates, continuous_flight, continuous_footprints, evaluated) = (
-            self._prune_redundant_completion_points(
-                capture_plan,
-                planning_route=planning_route,
-                skipped_point_ids=skipped_point_ids,
-                route_solution=route_solution,
-                route_candidates=route_candidates,
-                continuous_flight=continuous_flight,
-                continuous_footprints=continuous_footprints,
-                evaluated=evaluated,
-                patches=patches,
-                camera=camera,
-                flight_altitude_m=flight_altitude_m,
-                ground_elevation_m=ground_elevation_m,
-                semantic_map=semantic_map,
-                effective_geometry=effective.geometry,
-                obstacle_geometry=obstacles.geometry,
-                start=start,
-                return_to_start=return_to_start,
-                route_optimization_method=route_optimization_method,
-                video_analysis_rate_hz=video_analysis_rate_hz,
-                control_point_spacing_m=control_point_spacing_m,
-                coverage_speed_mps=coverage_speed_mps,
-                connector_speed_mps=connector_speed_mps,
-                obstacle_speed_mps=obstacle_speed_mps,
-                return_speed_mps=return_speed_mps,
-                minimum_coverage_ratio=minimum_coverage_ratio,
-            ))
+        if completion_strategy == "full_greedy":
+            (capture_plan, planning_route, skipped_point_ids, route_solution,
+             route_candidates, continuous_flight, continuous_footprints, evaluated) = (
+                self._prune_redundant_completion_points(
+                    capture_plan,
+                    planning_route=planning_route,
+                    skipped_point_ids=skipped_point_ids,
+                    route_solution=route_solution,
+                    route_candidates=route_candidates,
+                    continuous_flight=continuous_flight,
+                    continuous_footprints=continuous_footprints,
+                    evaluated=evaluated,
+                    patches=patches,
+                    camera=camera,
+                    flight_altitude_m=flight_altitude_m,
+                    ground_elevation_m=ground_elevation_m,
+                    semantic_map=semantic_map,
+                    effective_geometry=effective.geometry,
+                    obstacle_geometry=obstacles.geometry,
+                    start=start,
+                    return_to_start=return_to_start,
+                    route_optimization_method=route_optimization_method,
+                    video_analysis_rate_hz=video_analysis_rate_hz,
+                    control_point_spacing_m=control_point_spacing_m,
+                    coverage_speed_mps=coverage_speed_mps,
+                    connector_speed_mps=connector_speed_mps,
+                    obstacle_speed_mps=obstacle_speed_mps,
+                    return_speed_mps=return_speed_mps,
+                    minimum_coverage_ratio=minimum_coverage_ratio,
+                ))
         for index in range(len(planning_route) - 2, 0, -1):
             previous = planning_route[index - 1]
             tip = planning_route[index]
             following = planning_route[index + 1]
+            if completion_strategy == "local_insertion" and tip.capture:
+                continue
             detour_length = (
                 hypot(tip.x - previous.x, tip.y - previous.y)
                 + hypot(following.x - tip.x, following.y - tip.y)
@@ -408,7 +433,7 @@ class CoveragePlanner:
                           minimum_clearance,
                           minimum_coverage_ratio, coverage_requirement_met,
                           route_solution.method, route_candidates, unreachable_ground,
-                          chosen.pattern, comparison)
+                          chosen.pattern, comparison, completion_strategy)
 
     def _run_pattern(
         self, *, pattern: str, effective_geometry: Polygonal, patches: tuple[Patch, ...],
@@ -633,6 +658,74 @@ class CoveragePlanner:
             - hypot(right.x - left.x, right.y - left.y)
             for left, right in pairwise(route)
         )
+
+    @classmethod
+    def _insert_completion_points_locally(
+        cls,
+        service_route: tuple[Waypoint, ...],
+        completion_points: tuple[Waypoint, ...],
+        *,
+        start_enu_m: tuple[float, float],
+        obstacles: Polygonal,
+        return_to_start: bool,
+    ) -> tuple[Waypoint, ...]:
+        """Insert completion jobs without changing primary lane order or orientation."""
+        route = list(service_route)
+        router = VisibilityRouter(obstacles)
+
+        def distance(left: tuple[float, float], right: tuple[float, float]) -> float:
+            try:
+                path = router.shortest_path(left, right)
+            except RoutingError:
+                return float("inf")
+            return sum(hypot(b[0] - a[0], b[1] - a[1]) for a, b in pairwise(path))
+
+        for completion in completion_points:
+            candidate = (completion.x, completion.y)
+            choices: list[tuple[float, int]] = []
+            for index in cls._completion_insertion_indices(tuple(route)):
+                left = (route[index - 1].x, route[index - 1].y) if index else start_enu_m
+                left_to_candidate = distance(left, candidate)
+                if index < len(route):
+                    right = (route[index].x, route[index].y)
+                    delta = (
+                        left_to_candidate + distance(candidate, right)
+                        - distance(left, right)
+                    )
+                elif return_to_start:
+                    delta = (
+                        left_to_candidate + distance(candidate, start_enu_m)
+                        - distance(left, start_enu_m)
+                    )
+                else:
+                    delta = left_to_candidate
+                if delta < float("inf"):
+                    choices.append((delta, index))
+            if choices:
+                _, insertion_index = min(choices, key=lambda item: (item[0], item[1]))
+                route.insert(insertion_index, completion)
+        return tuple(route)
+
+    @staticmethod
+    def _completion_insertion_indices(
+        service_route: tuple[Waypoint, ...],
+    ) -> tuple[int, ...]:
+        """Return job boundaries while keeping each primary lane uninterrupted."""
+        indices = [0]
+        for index, (left, right) in enumerate(pairwise(service_route), 1):
+            same_primary_lane = (
+                not left.is_completion
+                and not right.is_completion
+                and left.scan_line_index is not None
+                and left.scan_segment_index is not None
+                and left.scan_line_index == right.scan_line_index
+                and left.scan_segment_index == right.scan_segment_index
+            )
+            if not same_primary_lane:
+                indices.append(index)
+        if not indices or indices[-1] != len(service_route):
+            indices.append(len(service_route))
+        return tuple(indices)
 
     @classmethod
     def _coverage_completion_point(

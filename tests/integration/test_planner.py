@@ -196,6 +196,45 @@ def test_completion_insertion_cost_prefers_candidate_near_existing_route() -> No
     assert near < far
 
 
+def test_local_completion_insertion_preserves_primary_lane_order() -> None:
+    lane_a = (
+        Waypoint("a1", 1, "capture", 0, 0, 10, 90, -90, True, 0, 0),
+        Waypoint("a2", 2, "capture", 10, 0, 10, 90, -90, True, 0, 0),
+    )
+    lane_b = (
+        Waypoint("b1", 3, "capture", 10, 10, 10, 270, -90, True, 1, 0),
+        Waypoint("b2", 4, "capture", 0, 10, 10, 270, -90, True, 1, 0),
+    )
+    completion = Waypoint(
+        "completion", 5, "capture", 5, 1, 10, 90, -90, True,
+        is_completion=True,
+    )
+    route = CoveragePlanner._insert_completion_points_locally(
+        lane_a + lane_b, (completion,), start_enu_m=(-5, 0),
+        obstacles=Polygon(), return_to_start=True,
+    )
+    primary_ids = [waypoint.id for waypoint in route if not waypoint.is_completion]
+    assert primary_ids == ["a1", "a2", "b1", "b2"]
+    assert route.index(lane_a[1]) == route.index(lane_a[0]) + 1
+    assert route.index(lane_b[1]) == route.index(lane_b[0]) + 1
+
+
+def test_local_completion_insertion_uses_obstacle_aware_cost() -> None:
+    service_route = (
+        Waypoint("a", 1, "capture", 0, 0, 10, 0, -90, True),
+        Waypoint("b", 2, "capture", 20, 0, 10, 0, -90, True),
+    )
+    completion = Waypoint(
+        "completion", 3, "capture", 10, 7, 10, 0, -90, True,
+        is_completion=True,
+    )
+    route = CoveragePlanner._insert_completion_points_locally(
+        service_route, (completion,), start_enu_m=(-10, 0),
+        obstacles=box(8, 1, 12, 6), return_to_start=False,
+    )
+    assert [waypoint.id for waypoint in route] == ["a", "completion", "b"]
+
+
 def test_completion_ignores_residual_inside_patch_tolerance() -> None:
     geometry = box(0, 0, 100, 100)
     patch = Patch("patch", 0, 0, (50, 50), geometry, geometry.area)

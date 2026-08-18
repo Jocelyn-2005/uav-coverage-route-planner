@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from threading import Lock
+from time import perf_counter
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
@@ -47,6 +48,7 @@ class PlanRequest(BaseModel):
     obstacle_speed_mps: float = Field(default=2.5, gt=0)
     return_speed_mps: float = Field(default=4.0, gt=0)
     route_optimization_method: Literal["auto"] = "auto"
+    completion_strategy: Literal["full_greedy", "local_insertion"] = "local_insertion"
 
     @field_validator("scan_direction_deg")
     @classmethod
@@ -79,6 +81,7 @@ class DualPlanRequest(BaseModel):
     obstacle_speed_mps: float = Field(default=2.5, gt=0)
     return_speed_mps: float = Field(default=4.0, gt=0)
     route_optimization_method: Literal["auto"] = "auto"
+    completion_strategy: Literal["full_greedy", "local_insertion"] = "local_insertion"
 
     @field_validator("scan_direction_deg")
     @classmethod
@@ -147,6 +150,7 @@ def plan(request: PlanRequest) -> dict[str, Any]:
     try:
         semantic = load_semantic_map(EXAMPLE / "semantic_map.json")
         with PLANNING_LOCK:
+            planning_started_at = perf_counter()
             result = CoveragePlanner().plan(
                 semantic_map=semantic, search_geometry=shape(request.search_geometry),
                 camera=request.camera, flight_altitude_m=request.flight_altitude_m,
@@ -162,9 +166,11 @@ def plan(request: PlanRequest) -> dict[str, Any]:
                 obstacle_speed_mps=request.obstacle_speed_mps,
                 return_speed_mps=request.return_speed_mps,
                 route_optimization_method=request.route_optimization_method,
+                completion_strategy=request.completion_strategy,
             )
+            planning_time_s = perf_counter() - planning_started_at
             export_plan(result, RESULTS)
-        return {"summary": _web_result(
+        return {"planning_time_s": planning_time_s, "summary": _web_result(
             result,
             [request.home_x_m, request.home_y_m, request.flight_altitude_m],
             camera=request.camera,
@@ -201,11 +207,14 @@ def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
             "obstacle_speed_mps": request.obstacle_speed_mps,
             "return_speed_mps": request.return_speed_mps,
             "route_optimization_method": request.route_optimization_method,
+            "completion_strategy": request.completion_strategy,
         }
         with PLANNING_LOCK:
+            planning_started_at = perf_counter()
             result = TwoDroneCoveragePlanner().plan(
                 assignments=assignments, semantic_map=semantic,
                 camera=request.camera, planner_options=options)
+            planning_time_s = perf_counter() - planning_started_at
             export_multi_plan(result, RESULTS)
         response = []
         for drone in result.drones:
@@ -220,7 +229,7 @@ def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
                     flight_altitude_m=request.flight_altitude_m,
                 ),
             })
-        return {"drones": response}
+        return {"planning_time_s": planning_time_s, "drones": response}
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -232,6 +241,13 @@ def _web_result(
     camera: CameraConfig,
     flight_altitude_m: float,
 ) -> dict[str, Any]:
+    coverage_ratio = (
+        sum(patch.area_m2 * patch.coverage_ratio for patch in result.patches)
+        / result.effective_area.geometry.area
+    )
+    worst_patch = min(result.patches, key=lambda patch: patch.coverage_ratio, default=None)
+    uncovered_area_m2 = sum(
+        patch.area_m2 * (1.0 - patch.coverage_ratio) for patch in result.patches)
     route_coordinates = [(waypoint.x, waypoint.y)
                          for waypoint in result.continuous_flight.waypoints]
     route = LineString(route_coordinates) if len(route_coordinates) > 1 else None
@@ -252,9 +268,13 @@ def _web_result(
             scan_direction_deg=result.scan_direction_deg,
         ) if result.coverage_generation_method == "bcd" else ())
     return {
-            "coverage_ratio": sum(p.area_m2*p.coverage_ratio for p in result.patches)/result.effective_area.geometry.area,
+            "coverage_ratio": coverage_ratio,
             "minimum_required_coverage_ratio": result.minimum_required_coverage_ratio,
             "coverage_requirement_met": result.coverage_requirement_met,
+            "worst_patch_id": worst_patch.id if worst_patch is not None else None,
+            "worst_patch_coverage_ratio": (
+                worst_patch.coverage_ratio if worst_patch is not None else None),
+            "uncovered_area_m2": uncovered_area_m2,
             "unreachable": list(result.unreachable_patch_ids),
             "unreachable_candidate_point_count": len(
                 result.unreachable_candidate_point_ids),
@@ -263,6 +283,7 @@ def _web_result(
             "scan_pattern": result.scan_pattern,
             "coverage_generation_method": result.coverage_generation_method,
             "route_optimization_method": result.route_optimization_method,
+            "completion_strategy": result.completion_strategy,
             "route_optimization_candidates": [{
                 "method": candidate.method,
                 "transition_distance_m": candidate.transition_cost_m,
@@ -282,9 +303,7 @@ def _web_result(
                 "unreachable_count": item.unreachable_patch_count,
             } for item in result.strategy_comparison],
             "final_solution_metrics": {
-                "coverage_ratio": sum(
-                    p.area_m2*p.coverage_ratio for p in result.patches
-                ) / result.effective_area.geometry.area,
+                "coverage_ratio": coverage_ratio,
                 "path_length_m": result.path_length_m,
                 "uncovered_patch_count": len(result.unreachable_patch_ids),
             },

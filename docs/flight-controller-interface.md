@@ -93,6 +93,9 @@ Route Optimization 方法。旧字段 `scan_pattern` 仅为向后兼容保留。
 `route_optimization_method` 固定为 `auto`。不超过 12 条 coverage lanes 时采用
 Exact；更大任务采用 Greedy + 2-opt + Or-opt 组合启发式。`scan_direction_deg`
 仅可为 `0`、`90` 或 `null`；`null` 表示自动比较两个正交方向。
+`completion_strategy` 记录覆盖补全的路线组织方式，默认值为 `local_insertion`；
+`full_greedy` 仅在调用方显式指定时使用。该字段用于追溯规划过程，不改变飞控对
+最终连续航点序列的执行方式。
 所有航段保持视频检测开启，任务不会在飞行中动态增加或修改航点。
 `unreachable_candidate_point_ids` 仅表示初始候选点无法安全到达，不等于漏检；
 最终仍低于覆盖要求的地面只由 `unreachable_patch_ids` 表示。下层系统判断任务是否
