@@ -14,6 +14,9 @@
   始终提供连续视频，`detection_enabled` 仅控制检测结果是否计入任务。
 - 视觉识别属于规划器下游。除非通过独立版本化策略显式输入，否则识别模型不得
   改变确定性的几何覆盖判定。
-- Coverage Generation 后续应加入更多 sweep direction 与 cell decomposition 对照；
-  Route Optimization 应加入 2-opt/Or-opt，以及小规模 MILP/GTSP 精确解和
-  optimality gap 报告。
+- Coverage Generation、lane 选择、排序和补全的一体化联合优化仅作为理论扩展方向，
+  当前继续采用可解释的分层流程。
+- 更高级的局部搜索仅作为未来资源受限场景下的降本增效研究方向，是否采用应以计算
+  时间、内存占用和解质量的实测收益为依据。
+- 多目标函数可扩展任务时间、重复覆盖、转弯和能耗等指标；当前不实施联合加权优化，
+  以避免计算与调参成本超过工程收益。
