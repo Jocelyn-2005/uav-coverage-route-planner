@@ -11,8 +11,8 @@ from pydantic import ValidationError
 
 from coverage_planner import __version__
 from coverage_planner.io import load_polygonal_geojson, load_semantic_map
+from coverage_planner.lightweight import LightweightCoveragePlanner
 from coverage_planner.models import CameraConfig
-from coverage_planner.planner import CoveragePlanner
 from coverage_planner.reporting import export_plan
 
 
@@ -32,7 +32,7 @@ def main() -> None:
     try:
         config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
         camera = CameraConfig.model_validate(config.pop("camera"))
-        result = CoveragePlanner().plan(
+        result = LightweightCoveragePlanner().plan(
             semantic_map=load_semantic_map(args.semantic_map),
             search_geometry=load_polygonal_geojson(args.search_area), camera=camera, **config)
         output = export_plan(result, args.output)

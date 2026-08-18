@@ -34,6 +34,7 @@ def build_continuous_flight_plan(
     control_point_spacing_m: float = 10.0,
     capture_region: Polygonal | None = None,
     semantic_map: SemanticMap | None = None,
+    wall_occlusion: bool = True,
 ) -> tuple[ContinuousFlightPlan, dict[str, Polygonal]]:
     """Convert a route into commands and sample its continuous visibility sweep."""
     if video_analysis_rate_hz <= 0:
@@ -90,7 +91,7 @@ def build_continuous_flight_plan(
             footprints[sample_id] = _detection_ground(
                 camera, point=point, flight_altitude_m=flight_altitude_m,
                 ground_elevation_m=ground_elevation_m, yaw_deg=heading,
-                semantic_map=semantic_map)
+                semantic_map=semantic_map, wall_occlusion=wall_occlusion)
 
     covered_route_indices = {
         index
@@ -107,7 +108,7 @@ def build_continuous_flight_plan(
             camera, point=(waypoint.x, waypoint.y),
             flight_altitude_m=flight_altitude_m,
             ground_elevation_m=ground_elevation_m, yaw_deg=waypoint.yaw_deg,
-            semantic_map=semantic_map)
+            semantic_map=semantic_map, wall_occlusion=wall_occlusion)
 
     commanded_waypoints, segments = _densify_commands(
         commanded_waypoints, segments, control_point_spacing_m)
@@ -128,8 +129,9 @@ def build_continuous_flight_plan(
 def _detection_ground(
     camera: CameraConfig, *, point: tuple[float, float], flight_altitude_m: float,
     ground_elevation_m: float, yaw_deg: float, semantic_map: SemanticMap | None,
+    wall_occlusion: bool,
 ) -> Polygonal:
-    if semantic_map is not None:
+    if semantic_map is not None and wall_occlusion:
         return visible_detection_ground(
             camera, center_enu_m=point, flight_altitude_m=flight_altitude_m,
             ground_elevation_m=ground_elevation_m, yaw_deg=yaw_deg,

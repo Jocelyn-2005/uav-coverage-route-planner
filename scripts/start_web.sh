@@ -13,13 +13,14 @@ cd "${PROJECT_ROOT}"
 
 echo "Coverage Planner Web: http://${HOST}:${PORT}"
 
-if command -v uv >/dev/null 2>&1; then
-    exec uv run uvicorn coverage_planner.web:app --host "${HOST}" --port "${PORT}"
-fi
-
 if [[ -x "${PROJECT_ROOT}/.venv/bin/uvicorn" ]]; then
     exec "${PROJECT_ROOT}/.venv/bin/uvicorn" \
         coverage_planner.web:app --host "${HOST}" --port "${PORT}"
+fi
+
+if command -v uv >/dev/null 2>&1; then
+    export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/coverage-planner-uv-cache}"
+    exec uv run uvicorn coverage_planner.web:app --host "${HOST}" --port "${PORT}"
 fi
 
 echo "Error: uv and .venv/bin/uvicorn are both unavailable." >&2

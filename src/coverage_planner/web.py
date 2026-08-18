@@ -12,13 +12,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from shapely.geometry import LineString, box, mapping, shape
 
-from coverage_planner.coverage.generators import build_boustrophedon_planning_cells
 from coverage_planner.geometry.calibration import MapCalibration
 from coverage_planner.io import load_semantic_map
 from coverage_planner.io.semantic_map import building_safety_elevations, building_safety_geometry
+from coverage_planner.lightweight import LightweightCoveragePlanner
 from coverage_planner.models import CameraConfig
 from coverage_planner.multi_planner import DroneAssignment, TwoDroneCoveragePlanner
-from coverage_planner.planner import CoveragePlanner, PlanResult
+from coverage_planner.planner import PlanResult
 from coverage_planner.reporting import export_multi_plan, export_plan
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,9 +38,8 @@ class PlanRequest(BaseModel):
     vertical_clearance_m: float = Field(ge=0)
     scan_direction_deg: float | None = None
     camera: CameraConfig
-    coverage_generation_method: Literal["global_scanline", "bcd"] = "global_scanline"
-    scan_pattern: Literal["scanline_clipped", "bcd"] | None = None
-    video_analysis_rate_hz: float = Field(default=2.0, gt=0)
+    coverage_generation_method: Literal["global_scanline"] = "global_scanline"
+    video_analysis_rate_hz: float = Field(default=1.0, gt=0)
     control_point_spacing_m: float = Field(default=10.0, gt=0)
     coverage_speed_mps: float = Field(default=5.0, gt=0)
     connector_speed_mps: float = Field(default=4.0, gt=0)
@@ -70,9 +69,8 @@ class DualPlanRequest(BaseModel):
     vertical_clearance_m: float = Field(ge=0)
     scan_direction_deg: float | None = None
     camera: CameraConfig
-    coverage_generation_method: Literal["global_scanline", "bcd"] = "global_scanline"
-    scan_pattern: Literal["scanline_clipped", "bcd"] | None = None
-    video_analysis_rate_hz: float = Field(default=2.0, gt=0)
+    coverage_generation_method: Literal["global_scanline"] = "global_scanline"
+    video_analysis_rate_hz: float = Field(default=1.0, gt=0)
     control_point_spacing_m: float = Field(default=10.0, gt=0)
     coverage_speed_mps: float = Field(default=5.0, gt=0)
     connector_speed_mps: float = Field(default=4.0, gt=0)
@@ -89,11 +87,8 @@ class DualPlanRequest(BaseModel):
 
 
 def _request_generation_method(
-    request: PlanRequest | DualPlanRequest,
-) -> Literal["global_scanline", "bcd"]:
-    """Resolve the canonical field while accepting the legacy Web API key."""
-    if request.scan_pattern is not None:
-        return "bcd" if request.scan_pattern == "bcd" else "global_scanline"
+    request: PlanRequest,
+) -> Literal["global_scanline"]:
     return request.coverage_generation_method
 
 
@@ -147,7 +142,7 @@ def plan(request: PlanRequest) -> dict[str, Any]:
     try:
         semantic = load_semantic_map(EXAMPLE / "semantic_map.json")
         with PLANNING_LOCK:
-            result = CoveragePlanner().plan(
+            result = LightweightCoveragePlanner().plan(
                 semantic_map=semantic, search_geometry=shape(request.search_geometry),
                 camera=request.camera, flight_altitude_m=request.flight_altitude_m,
                 start=(request.home_x_m, request.home_y_m, request.flight_altitude_m),
@@ -165,11 +160,7 @@ def plan(request: PlanRequest) -> dict[str, Any]:
             )
             export_plan(result, RESULTS)
         return {"summary": _web_result(
-            result,
-            [request.home_x_m, request.home_y_m, request.flight_altitude_m],
-            camera=request.camera,
-            flight_altitude_m=request.flight_altitude_m,
-        )}
+            result, [request.home_x_m, request.home_y_m, request.flight_altitude_m])}
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -178,22 +169,20 @@ def plan(request: PlanRequest) -> dict[str, Any]:
 def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
     try:
         semantic = load_semantic_map(EXAMPLE / "semantic_map.json")
-        assignments = (
+        assignments = tuple(
             DroneAssignment(
-                request.drones[0].drone_id, shape(request.drones[0].search_geometry),
-                (request.drones[0].home_x_m, request.drones[0].home_y_m,
-                 request.flight_altitude_m)),
-            DroneAssignment(
-                request.drones[1].drone_id, shape(request.drones[1].search_geometry),
-                (request.drones[1].home_x_m, request.drones[1].home_y_m,
-                 request.flight_altitude_m)),
+                drone.drone_id,
+                shape(drone.search_geometry),
+                (drone.home_x_m, drone.home_y_m, request.flight_altitude_m),
+            )
+            for drone in request.drones
         )
         options = {
             "flight_altitude_m": request.flight_altitude_m,
             "horizontal_clearance_m": request.horizontal_clearance_m,
             "vertical_clearance_m": request.vertical_clearance_m,
             "scan_direction_deg": request.scan_direction_deg,
-            "coverage_generation_method": _request_generation_method(request),
+            "coverage_generation_method": request.coverage_generation_method,
             "video_analysis_rate_hz": request.video_analysis_rate_hz,
             "control_point_spacing_m": request.control_point_spacing_m,
             "coverage_speed_mps": request.coverage_speed_mps,
@@ -204,23 +193,21 @@ def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
         }
         with PLANNING_LOCK:
             result = TwoDroneCoveragePlanner().plan(
-                assignments=assignments, semantic_map=semantic,
-                camera=request.camera, planner_options=options)
+                assignments=assignments,  # type: ignore[arg-type]
+                semantic_map=semantic,
+                camera=request.camera,
+                planner_options=options,
+            )
             export_multi_plan(result, RESULTS)
-        response = []
-        for drone in result.drones:
-            first = drone.result.continuous_flight.waypoints[0]
-            response.append({
-                "drone_id": drone.drone_id,
-                "responsibility_area": mapping(drone.assigned_geometry),
-                "summary": _web_result(
-                    drone.result,
-                    [first.x, first.y, first.z],
-                    camera=request.camera,
-                    flight_altitude_m=request.flight_altitude_m,
-                ),
-            })
-        return {"drones": response}
+        return {"drones": [{
+            "drone_id": drone.drone_id,
+            "responsibility_area": mapping(drone.assigned_geometry),
+            "summary": _web_result(drone.result, [
+                drone.result.planning_route[0].x,
+                drone.result.planning_route[0].y,
+                drone.result.planning_route[0].z,
+            ]),
+        } for drone in result.drones]}
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -228,29 +215,19 @@ def plan_dual(request: DualPlanRequest) -> dict[str, Any]:
 def _web_result(
     result: PlanResult,
     home: list[float],
-    *,
-    camera: CameraConfig,
-    flight_altitude_m: float,
 ) -> dict[str, Any]:
-    route_coordinates = [(waypoint.x, waypoint.y)
-                         for waypoint in result.continuous_flight.waypoints]
-    route = LineString(route_coordinates) if len(route_coordinates) > 1 else None
-    route_length = route.length if route is not None else 0.0
-    visibility_samples = sorted(({
-        "id": sample_id,
-        "geometry": mapping(geometry),
-        "route_progress": (route.project(geometry.centroid) / route_length
-                           if route is not None and route_length else 0.0),
-    } for sample_id, geometry in result.visibility_samples),
-        key=lambda sample: (sample["route_progress"], sample["id"]))
-    coverage_cells = (
-        build_boustrophedon_planning_cells(
-            result.effective_area.geometry,
-            camera=camera,
-            flight_altitude_m=flight_altitude_m,
-            ground_elevation_m=0.0,
-            scan_direction_deg=result.scan_direction_deg,
-        ) if result.coverage_generation_method == "bcd" else ())
+    route = LineString([
+        (waypoint.x, waypoint.y) for waypoint in result.continuous_flight.waypoints
+    ])
+    route_length = route.length
+    visibility_samples: list[dict[str, Any]] = []
+    for sample_id, geometry in result.visibility_samples:
+        visibility_samples.append({
+            "geometry": mapping(geometry.intersection(result.effective_area.geometry)),
+            "route_progress": (
+                route.project(geometry.centroid) / route_length if route_length else 0.0),
+        })
+    visibility_samples.sort(key=lambda sample: sample["route_progress"])
     return {
             "coverage_ratio": sum(p.area_m2*p.coverage_ratio for p in result.patches)/result.effective_area.geometry.area,
             "minimum_required_coverage_ratio": result.minimum_required_coverage_ratio,
@@ -274,7 +251,6 @@ def _web_result(
             "path_length_m": result.path_length_m,
             "lane_count": len(result.continuous_flight.lanes),
             "flight_waypoint_count": len(result.continuous_flight.waypoints),
-            "visibility_sample_count": result.continuous_flight.visibility_sample_count,
             "initial_candidate_metrics": [{
                 "pattern": item.pattern, "coverage_ratio": item.coverage_ratio,
                 "planning_point_count": item.planning_point_count,
@@ -293,23 +269,6 @@ def _web_result(
             "visible_detection_area": mapping(result.visible_detection_geometry),
             "visibility_samples": visibility_samples,
             "obstacles": mapping(result.obstacles.geometry),
-            "coverage_cells": [{
-                "id": f"cell_{index + 1:03d}",
-                "index": index,
-                "geometry": mapping(cell),
-                "area_m2": cell.area,
-                "label_point": [
-                    cell.representative_point().x,
-                    cell.representative_point().y,
-                ],
-            } for index, cell in enumerate(coverage_cells)],
-            "completion_points": [{
-                "id": waypoint.id,
-                "x": waypoint.x,
-                "y": waypoint.y,
-                "z": waypoint.z,
-            } for waypoint in result.planning_route
-                if waypoint.is_completion],
             "patches": [{"id":p.id,"geometry":mapping(p.geometry),"covered":p.covered,"ratio":p.coverage_ratio} for p in result.patches],
             "flight_waypoints": [{
                 "id": w.id, "x": w.x, "y": w.y, "z": w.z,
@@ -332,7 +291,7 @@ def _web_result(
 @app.get("/api/export/{filename}")
 def download(filename: str) -> FileResponse:
     allowed={"flight_plan.json","flight_plan.yaml","mission_manifest.json",
-             "patches.geojson","route.geojson","coverage_report.json","visualization.png"}
+             "patches.geojson","route.geojson","coverage_report.json"}
     if filename not in allowed or not (RESULTS/filename).is_file():
         raise HTTPException(status_code=404, detail="export not found")
     return FileResponse(RESULTS/filename, filename=filename)
@@ -341,8 +300,8 @@ def download(filename: str) -> FileResponse:
 @app.get("/api/export/{drone_id}/{filename}")
 def download_drone(drone_id: str, filename: str) -> FileResponse:
     allowed_drones = {"drone_1", "drone_2"}
-    allowed = {"flight_plan.json", "flight_plan.yaml", "patches.geojson", "route.geojson",
-               "coverage_report.json", "visualization.png"}
+    allowed = {"flight_plan.json", "flight_plan.yaml", "patches.geojson",
+               "route.geojson", "coverage_report.json"}
     path = RESULTS / drone_id / filename
     if drone_id not in allowed_drones or filename not in allowed or not path.is_file():
         raise HTTPException(status_code=404, detail="export not found")

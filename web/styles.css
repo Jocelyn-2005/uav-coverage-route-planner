@@ -23,12 +23,7 @@ svg{width:100%;height:100%}
 .patch.uncovered{fill:#d95d5d;fill-opacity:.65}
 .lane-route{stroke-width:.75;stroke-linecap:round}
 .transition-route{stroke-width:.6;stroke-dasharray:2 1.2;stroke-linecap:round;opacity:.9}
-.coverage-cell{pointer-events:none}
-.coverage-cell-boundary{fill-opacity:.11;stroke-width:1.2;stroke-dasharray:3 1.2;stroke-linejoin:round;vector-effect:non-scaling-stroke}
-.coverage-cell-label-bg{fill:#fff;fill-opacity:.92;stroke:#17202a;stroke-width:.35}
-.coverage-cell-label{font-size:4px;font-weight:700;fill:#17202a}
 .waypoint{fill:#111;stroke:#fff;stroke-width:.2}
-.completion-point{fill:#e03131;stroke:#fff;stroke-width:.45;vector-effect:non-scaling-stroke}
 .transit{fill:#f08c00}
 .map-frame{fill:none;stroke:#c92a2a;stroke-width:1.1;pointer-events:none}
 .search-boundary{fill:none;stroke:#f4d35e;stroke-width:.65;stroke-dasharray:2 1;pointer-events:none}
@@ -40,11 +35,11 @@ svg{width:100%;height:100%}
 .compass-arrow{fill:#c92a2a;stroke:#fff;stroke-width:.25}
 .map-label{font-size:5px;font-weight:700;fill:#111;paint-order:stroke;stroke:#fff;stroke-width:1.6px;stroke-linejoin:round}
 .home{fill:#ffb000;stroke:#fff;stroke-width:.5}
-.drone{fill:#ffb000;stroke:#111;stroke-width:.45}
-.captured-footprint{fill:#b9f6ca;fill-opacity:.18;stroke:#73d69a;stroke-opacity:.38;stroke-width:.14}
+.drone{stroke:#fff;stroke-width:.45}
+.animated-coverage{pointer-events:none}
+#draw-region{width:100%;margin:3px 0;padding:7px}
 .draw-region{width:100%;margin:3px 0;padding:7px}.draw-region.drone-2{background:#e67700}
 .hint{color:#65717c}.valid-coverage{pointer-events:none}
-.viewpoint-coverage{pointer-events:none}
 #draw-tip{position:absolute;top:12px;left:12px;background:#17202a;color:#fff;padding:8px 12px;display:none}
 #error{position:absolute;bottom:12px;left:12px;background:#b42318;color:#fff;padding:8px;display:none}
 #exports a{display:block;color:#1864ab;font-size:12px;margin:5px 0}

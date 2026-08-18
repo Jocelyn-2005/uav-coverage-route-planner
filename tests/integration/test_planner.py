@@ -29,9 +29,8 @@ def test_planner_exports_all_required_artifacts(tmp_path: Path) -> None:
       vertical_clearance_m=2,scan_direction_deg=90)
     export_plan(result,tmp_path)
     expected={"patches.geojson","route.geojson","coverage_report.json",
-              "visualization.png","flight_plan.json","flight_plan.yaml"}
+              "flight_plan.json","flight_plan.yaml"}
     assert {path.name for path in tmp_path.iterdir()} == expected
-    assert (tmp_path/"visualization.png").stat().st_size>10_000
     assert (result.planning_route[0].x, result.planning_route[0].y) == (
         result.planning_route[-1].x, result.planning_route[-1].y
     )

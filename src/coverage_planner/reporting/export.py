@@ -5,11 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import matplotlib
 import yaml
-
-matplotlib.use("Agg")
-from matplotlib import pyplot as plt
 from shapely.geometry import LineString, mapping
 
 from coverage_planner.multi_planner import MultiDronePlan
@@ -30,12 +26,10 @@ def export_plan(result: PlanResult, output_dir: str | Path) -> Path:
     route = LineString([(w.x,w.y) for w in flight_points]) if len(flight_points)>1 else LineString()
     _json(output/"route.geojson", {"type":"Feature","geometry":mapping(route),"properties":summary})
     _json(output/"coverage_report.json", summary | {"warnings":list(result.warnings)})
-    _visualization(result, output/"visualization.png")
     return output
 
 
 def export_multi_plan(plan: MultiDronePlan, output_dir: str | Path) -> Path:
-    """Write two independent flight plans plus one coordination-free manifest."""
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     drones = []
@@ -44,18 +38,13 @@ def export_multi_plan(plan: MultiDronePlan, output_dir: str | Path) -> Path:
         drones.append({
             "drone_id": drone.drone_id,
             "responsibility_geometry": mapping(drone.assigned_geometry),
-            "responsibility_area_m2": drone.result.effective_area.geometry.area,
-            "path_length_m": drone.result.path_length_m,
-            "coverage_ratio": _summary(drone.result)["coverage_ratio"],
             "flight_plan": str((drone_dir / "flight_plan.json").relative_to(output)),
             "coverage_report": str((drone_dir / "coverage_report.json").relative_to(output)),
         })
     _json(output / "mission_manifest.json", {
-        "schema_version": "1.0", "mission_type": "independent_two_drone_detection",
-        "temporal_collision_avoidance": False, "simultaneous_start": True,
-        "mission_status": ("ready" if all(
-            drone.result.coverage_requirement_met for drone in plan.drones)
-            else "infeasible_coverage"),
+        "schema_version": "1.0",
+        "mission_type": "independent_two_drone_coverage",
+        "temporal_collision_avoidance": False,
         "drones": drones,
     })
     return output
@@ -148,7 +137,7 @@ def _flight_mission(result: PlanResult) -> dict[str, object]:
                                 "length_m": flight.target_length_m,
                                 "height_m": flight.target_height_m},
             "image_boundary_margin_ratio": flight.image_boundary_margin_ratio,
-            "building_wall_occlusion": True,
+            "building_wall_occlusion": False,
         },
         "lanes": [{
             "id": lane.id, "sequence": lane.sequence, "heading_deg": lane.heading_deg,
@@ -178,20 +167,3 @@ def _flight_mission(result: PlanResult) -> dict[str, object]:
 
 def _json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
-
-
-def _visualization(result: PlanResult, path: Path) -> None:
-    figure, axes = plt.subplots(figsize=(12, 8))
-    for patch in result.patches:
-        geometries = patch.geometry.geoms if patch.geometry.geom_type == "MultiPolygon" else [patch.geometry]
-        for geometry in geometries:
-            x, y = geometry.exterior.xy
-            axes.fill(x, y, color="#4f9d69" if patch.covered else "#d95d5d", alpha=0.35)
-    flight_points = result.continuous_flight.waypoints
-    if flight_points:
-        axes.plot([w.x for w in flight_points], [w.y for w in flight_points], color="#1864ab", linewidth=.8)
-        axes.scatter([w.x for w in flight_points], [w.y for w in flight_points],
-                     s=5, color="#111111")
-    axes.set_aspect("equal"); axes.set_xlabel("East x (m)"); axes.set_ylabel("North y (m)")
-    axes.set_title(f"{result.semantic_map.world_name} coverage plan"); figure.tight_layout()
-    figure.savefig(path, dpi=160); plt.close(figure)
