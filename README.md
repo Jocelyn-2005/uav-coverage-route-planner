@@ -124,14 +124,16 @@ results/example_run/visualization.png
 
 双机 Web 任务在根目录额外输出 `mission_manifest.json`，并在 `drone_1/`、
 `drone_2/` 下分别保存两架无人机的计划和验收文件。清单中的 `mission_status=ready`
-仅表示两架飞机各自在人工责任区内的每个可搜索 patch 均达到 `99.99%` 数值覆盖
-阈值，不代表责任区并集覆盖整张地图，
+仅表示两架飞机各自在人工责任区内需要强制验收的可搜索 patch 均达到 `99%` 数值覆盖
+阈值。裁剪后面积小于标准 patch 面积 5% 的边界碎片仍参与航线生成和补全，但不影响
+最终成功性判定，并在报告中单独列出；该状态不代表责任区并集覆盖整张地图，
 也不代表已经完成双机时空避碰。
 
 覆盖报告区分两个阶段：`initial_candidate_metrics` 是补漏和连续视野复核前的初始
 候选指标，`final_solution_metrics` 才是最终航线指标。
 `unreachable_candidate_point_ids` 表示初始候选点不可安全到达，但可能已经由其他
-视野补偿；真正仍未达到覆盖要求的地面只由 `unreachable_patch_ids` 表示。
+视野补偿；真正仍影响成功性判定的地面由 `unreachable_patch_ids` 表示，豁免的小
+碎片由 `ignored_small_patch_ids` 单独记录。
 
 ### 给下层飞控的文件
 

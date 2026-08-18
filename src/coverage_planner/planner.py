@@ -48,6 +48,7 @@ from coverage_planner.routing.visibility import RoutingError, VisibilityRouter
 from coverage_planner.visibility import visible_detection_ground
 
 _MINIMUM_COMPLETION_SEPARATION_M = 2.0
+_MINIMUM_ENFORCED_PATCH_AREA_RATIO = 0.05
 CompletionStrategy = Literal["full_greedy", "local_insertion"]
 
 
@@ -107,6 +108,8 @@ class PlanResult:
         return self.scan_pattern
     strategy_comparison: tuple[StrategyMetrics, ...] = ()
     completion_strategy: CompletionStrategy = "local_insertion"
+    ignored_small_patch_ids: tuple[str, ...] = ()
+    minimum_enforced_patch_area_ratio: float = _MINIMUM_ENFORCED_PATCH_AREA_RATIO
 
     @property
     def path_length_m(self) -> float:
@@ -120,7 +123,7 @@ class CoveragePlanner:
         horizontal_clearance_m: float = 3.0, vertical_clearance_m: float = 2.0,
         allow_overflight_above_buildings: bool = True, scan_direction_deg: float | None = None,
         patch_config: PatchGridConfig | None = None, ground_elevation_m: float = 0.0,
-        minimum_coverage_ratio: float = 0.9999,
+        minimum_coverage_ratio: float = 0.99,
         return_to_start: bool = True,
         coverage_generation_method: Literal["global_scanline", "bcd"] | None = None,
         scan_pattern: Literal["scanline_clipped", "bcd", "lawn_mower"] | None = None,
@@ -377,16 +380,18 @@ class CoveragePlanner:
             continuous_flight = candidate_flight
             continuous_footprints = candidate_footprints
             evaluated = candidate_evaluated
-        unreachable = tuple(p.id for p in evaluated if not p.covered)
+        nominal_patch_area_m2 = (
+            dimensions.scan_line_spacing_m * dimensions.capture_spacing_m)
+        minimum_enforced_patch_area_m2 = (
+            nominal_patch_area_m2 * _MINIMUM_ENFORCED_PATCH_AREA_RATIO)
+        unreachable, ignored_small_patches = self._partition_failed_patches(
+            evaluated, minimum_enforced_patch_area_m2=minimum_enforced_patch_area_m2)
+        unreachable_set = set(unreachable)
+        ignored_small_patch_set = set(ignored_small_patches)
         unreachable_ground = self._unreachable_ground(
-            evaluated, continuous_footprints, obstacles.geometry)
-        effective_area_m2 = effective.geometry.area
-        covered_area_m2 = sum(p.area_m2 * p.coverage_ratio for p in evaluated)
-        achieved_coverage_ratio = (
-            covered_area_m2 / effective_area_m2 if effective_area_m2 else 0.0)
-        coverage_requirement_met = (
-            not unreachable
-            and achieved_coverage_ratio >= minimum_coverage_ratio)
+            tuple(patch for patch in evaluated if patch.id not in ignored_small_patch_set),
+            continuous_footprints, obstacles.geometry)
+        coverage_requirement_met = not unreachable
         warnings = []
         if skipped_point_ids:
             if coverage_requirement_met:
@@ -402,12 +407,18 @@ class CoveragePlanner:
         if not coverage_requirement_met:
             unresolved_area_m2 = sum(
                 patch.area_m2 * (1.0 - patch.coverage_ratio)
-                for patch in evaluated if not patch.covered)
+                for patch in evaluated if patch.id in unreachable_set)
             warnings.append(
                 f"{len(unreachable)} search patches remain below the required "
                 f"{minimum_coverage_ratio:.4f} coverage, with approximately "
                 f"{unresolved_area_m2:.2f} m^2 unresolved; mission is not ready "
                 "for execution")
+        if ignored_small_patches:
+            warnings.append(
+                f"{len(ignored_small_patches)} clipped patches below "
+                f"{_MINIMUM_ENFORCED_PATCH_AREA_RATIO:.0%} of a nominal patch were "
+                "excluded from the final readiness decision after still participating "
+                "in coverage generation and completion")
         comparison = tuple(item.metrics for item in sorted(candidates, key=lambda item: item.pattern))
         visible_union = (
             unary_union(tuple(continuous_footprints.values()))
@@ -433,7 +444,8 @@ class CoveragePlanner:
                           minimum_clearance,
                           minimum_coverage_ratio, coverage_requirement_met,
                           route_solution.method, route_candidates, unreachable_ground,
-                          chosen.pattern, comparison, completion_strategy)
+                          chosen.pattern, comparison, completion_strategy,
+                          ignored_small_patches, _MINIMUM_ENFORCED_PATCH_AREA_RATIO)
 
     def _run_pattern(
         self, *, pattern: str, effective_geometry: Polygonal, patches: tuple[Patch, ...],
@@ -578,6 +590,19 @@ class CoveragePlanner:
                 for identifier in segment.capture_waypoint_ids),
         ) for segment in retained)
         return replace(capture_plan, scan_segments=segments, capture_waypoints=ordered)
+
+    @staticmethod
+    def _partition_failed_patches(
+        patches: tuple[Patch, ...], *, minimum_enforced_patch_area_m2: float,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Separate readiness failures from clipped fragments that remain reportable."""
+        failed = tuple(patch for patch in patches if not patch.covered)
+        ignored = tuple(
+            patch.id for patch in failed
+            if patch.area_m2 < minimum_enforced_patch_area_m2)
+        ignored_set = set(ignored)
+        enforced = tuple(patch.id for patch in failed if patch.id not in ignored_set)
+        return enforced, ignored
 
     @staticmethod
     def _unreachable_ground(

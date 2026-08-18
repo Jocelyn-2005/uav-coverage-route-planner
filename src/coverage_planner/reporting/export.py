@@ -83,6 +83,7 @@ def _summary(result: PlanResult) -> dict[str, object]:
       "covered_area_m2":covered,"uncovered_area_m2":max(0,effective-covered),
       "coverage_ratio":covered/effective if effective else 0,"scan_direction_deg":result.scan_direction_deg,
       "minimum_required_coverage_ratio":result.minimum_required_coverage_ratio,
+      "minimum_enforced_patch_area_ratio":result.minimum_enforced_patch_area_ratio,
       "coverage_requirement_met":result.coverage_requirement_met,
       "scan_pattern":result.scan_pattern,
       "coverage_generation_method":result.coverage_generation_method,
@@ -124,6 +125,8 @@ def _summary(result: PlanResult) -> dict[str, object]:
       "unreachable_candidate_point_ids":list(result.unreachable_candidate_point_ids),
       "uncovered_patch_count":len(result.unreachable_patch_ids),
       "unreachable_patch_ids":list(result.unreachable_patch_ids),
+      "ignored_small_patch_count":len(result.ignored_small_patch_ids),
+      "ignored_small_patch_ids":list(result.ignored_small_patch_ids),
       "unreachable_ground":[{
           "geometry": mapping(item.geometry),
           "area_m2": item.area_m2,

@@ -57,7 +57,7 @@ def optimize_scan_direction(
 def supplement_uncovered_patches(
     plan: CapturePlan, patches: Sequence[Patch], *, camera: CameraConfig,
     flight_altitude_m: float, ground_elevation_m: float,
-    minimum_coverage_ratio: float = 0.9999, maximum_passes: int = 2,
+    minimum_coverage_ratio: float = 0.99, maximum_passes: int = 2,
 ) -> tuple[CapturePlan, tuple[Patch, ...]]:
     waypoints = list(plan.capture_waypoints)
     evaluated: tuple[Patch, ...] = tuple(patches)

@@ -249,6 +249,17 @@ def test_completion_ignores_residual_inside_patch_tolerance() -> None:
         patch, covered, minimum_coverage_ratio=.9999) is not None
 
 
+def test_small_clipped_patch_is_reported_but_does_not_fail_readiness() -> None:
+    small = Patch("small", 0, 0, (0.5, 0.5), box(0, 0, 1, 1), 1.0)
+    normal = Patch("normal", 0, 1, (5, 5), box(0, 0, 10, 10), 100.0)
+
+    enforced, ignored = CoveragePlanner._partition_failed_patches(
+        (small, normal), minimum_enforced_patch_area_m2=5.0)
+
+    assert enforced == ("normal",)
+    assert ignored == ("small",)
+
+
 def test_many_completion_points_still_receive_final_auto_optimization() -> None:
     map_geometry = box(0, 0, 140, 20)
     many_points = tuple(

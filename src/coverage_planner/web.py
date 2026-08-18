@@ -270,6 +270,8 @@ def _web_result(
     return {
             "coverage_ratio": coverage_ratio,
             "minimum_required_coverage_ratio": result.minimum_required_coverage_ratio,
+            "minimum_enforced_patch_area_ratio": (
+                result.minimum_enforced_patch_area_ratio),
             "coverage_requirement_met": result.coverage_requirement_met,
             "worst_patch_id": worst_patch.id if worst_patch is not None else None,
             "worst_patch_coverage_ratio": (
@@ -279,6 +281,8 @@ def _web_result(
             "unreachable_candidate_point_count": len(
                 result.unreachable_candidate_point_ids),
             "uncovered_patch_count": len(result.unreachable_patch_ids),
+            "ignored_small_patch_count": len(result.ignored_small_patch_ids),
+            "ignored_small_patch_ids": list(result.ignored_small_patch_ids),
             "warnings": list(result.warnings),
             "scan_pattern": result.scan_pattern,
             "coverage_generation_method": result.coverage_generation_method,

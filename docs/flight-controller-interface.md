@@ -98,5 +98,8 @@ Exact；更大任务采用 Greedy + 2-opt + Or-opt 组合启发式。`scan_direc
 最终连续航点序列的执行方式。
 所有航段保持视频检测开启，任务不会在飞行中动态增加或修改航点。
 `unreachable_candidate_point_ids` 仅表示初始候选点无法安全到达，不等于漏检；
-最终仍低于覆盖要求的地面只由 `unreachable_patch_ids` 表示。下层系统判断任务是否
-可以执行时，应读取 `mission_status` 和最终覆盖指标，不能依据候选点数量自行否决。
+最终仍低于覆盖要求并影响成功性判定的地面由 `unreachable_patch_ids` 表示。下层
+系统判断任务是否可以执行时，应读取 `mission_status` 和最终覆盖指标，不能依据候选
+点数量自行否决。
+`ignored_small_patch_ids` 记录面积小于标准 patch 面积 5%、仍参与规划但不影响最终
+成功性判定的裁剪碎片。这些 patch 不应被解释为已经覆盖。
