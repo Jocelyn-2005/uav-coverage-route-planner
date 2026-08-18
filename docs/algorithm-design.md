@@ -1,174 +1,640 @@
 # Coverage Generation 与 Route Optimization 算法设计
 
-## 1. 分层求解框架
+## 1. 问题定义
 
-规划器采用“Coverage Generation、飞行前覆盖补全、Route Optimization、最终验证”的分层结构。输出任务在起飞前完全固定，飞行过程中不动态搜索或补漏：
+给定语义地图 \(M\)、用户搜索区域 \(U\)、相机模型 \(C\)、固定飞行高度 \(h\)、起降点 \(s\) 以及建筑安全约束，规划器需要生成一条安全、闭合且可执行的连续飞行任务，使所有可搜索地面满足规定的覆盖要求。
+
+当前系统采用确定性 2.5D 建模：
+
+- 目标视为静止目标；
+- 无人机固定高度飞行；
+- 相机保持正射，`pitch = -90°`；
+- 建筑高度用于飞行避障与视觉遮挡建模；
+- 所有规划、补漏与验证均在起飞前完成；
+- 当前不包含飞行中的在线重规划。
+
+整体流程为：
 
 ```text
-语义地图 + 用户区域 + 相机/飞行参数
-                ↓
-有效搜索区域与飞行障碍构造
-                ↓
-Coverage Generation：生成满足全覆盖约束的 lanes
-                ↓
-覆盖航线裁剪、补漏和端点化
-                ↓
-Route Optimization：lane ordering + lane orientation
-                ↓
-可见图障碍最短路连接
-                ↓
-连续视频视野采样、墙体遮挡裁剪与覆盖复核
-                ↓
-均匀飞控途径点 + JSON/YAML 导出
+Search-space Construction
+        ↓
+Camera-aware Coverage Geometry
+        ↓
+Primary Coverage Generation
+        ↓
+Route Optimization
+        ↓
+Obstacle-aware Mission Construction
+        ↓
+Continuous Visibility Evaluation
+        ↓
+Patch-wise Coverage Validation
+        ↓
+Coverage Completion if Necessary
+        ↓
+Final Mission Export
 ```
 
-这样做的原因是连续多边形覆盖、航线集合选择、访问排序和障碍最短路耦合后属于高复杂度组合优化问题。分层方法容易解释、可重复、可单元测试，也允许以后单独替换某一层求解器。
+---
 
 ## 2. 有效搜索区域
 
-首先将用户搜索多边形裁剪到语义地图边界，再扣除建筑占地和显式排除区。建筑占地永远不属于地面视频检测区域；但建筑是否为飞行障碍取决于无人机能否在满足垂直净空时越楼。
+真正需要搜索的地面定义为：
 
-这里区分两个容易混淆的集合：
+$$
+\Omega = (U \cap M) \setminus (B \cup E)
+$$
 
-- 地面搜索区域：相机需要覆盖的地面；
-- 飞行自由空间：无人机平面投影允许经过的区域。
+其中：
 
-高楼可能同时从两个集合中排除；低楼占地不需要搜索，但无人机可能从其上空越过。
+- \(U\)：用户指定搜索区域；
+- \(M\)：语义地图有效边界；
+- \(B\)：建筑物地面占地；
+- \(E\)：显式排除区域。
 
-对于其他地图中明确标记 `ground_contact=false` 的悬空结构，其地面投影不从搜索
-集合中扣除，飞行阻挡条件为飞行高度进入
-`[elevation_min_m - vertical_clearance_m, elevation_max_m + vertical_clearance_m]`。
-云谷当前的 `collider_building9.001` 和 `collider_building9.002` 已按任务口径改为
-从地面开始的实体建筑，不再应用悬空结构规则。云谷示例还为主体建筑提供由最终
-视觉网格测得的保守安全体，用于替代偏小的碰撞核心。
+需要严格区分三个空间：
 
-## 3. Coverage Generation：覆盖航道生成
+1. **Search Space**：必须被相机覆盖的地面；
+2. **Flight Free Space**：无人机在当前高度允许经过的区域；
+3. **Visible Ground**：从当前相机位姿实际可见的地面。
 
-Coverage Generation 与 Route Optimization 是两个独立层次。当前正式实现两个平行
-的 Coverage Generation 方法：
+建筑物分别影响这三个空间：
 
-1. `GlobalScanlineGenerator`：先在整个有效区域生成全局平行扫描线，再由边界和
-   障碍裁剪为 lane；
-2. `BCDGenerator`：沿扫描线法向推进，以多边形顶点为事件；相邻切片仅在连通关系
-   为一对一时合并，遇到自由空间分裂或合并便建立新的单调 cell，随后在每个 cell
-   内生成往复式 lane。
+- 建筑占地不参与地面搜索；
+- 部分建筑在当前高度构成飞行障碍；
+- 建筑墙体会遮挡其后方地面。
 
-两者不存在先后或替代关系，代表“先生成全局 lane 再裁剪”和“先分 cell 再生成
-lane”两种基础几何视角。两者都输出相同的 `CoveragePlan`，并转换成统一的
-`RouteOptimizationProblem`，共享排序算法、
-避障转场成本和 benchmark。当前 BCD 实现采用基于顶点事件切片的一般多边形方法，
-支持孔洞和多连通区域；退化边界通过几何容差处理。
+因此：
 
-BCD 的 cell 只决定覆盖任务的拓扑归属，不应让每个 cell 独立选择扫描线相位。当前
-实现先对完整责任区建立一套统一间距、统一相位的扫描线格架，再将每条有效 lane
-归属到对应 cell。这样可避免相邻小 cell 各自居中后生成距离远小于规定旁向间距的
-重复 lane。cell 之间的连接仍由统一组合优化层决定，不属于初始覆盖 lane。
+```text
+Search Space
+≠
+Flight Free Space
+≠
+Visible Ground
+```
 
-### 3.1 往复式覆盖
+---
 
-将有效区域旋转到候选扫描方向，在旋转空间生成等间距平行线，与搜索多边形求交后得到若干直线段。相邻扫描线交替反向，形成 boustrophedon（牛耕式/往复式）基础顺序。
+## 3. Camera-aware Coverage Geometry
 
-扫描线间距由有效视野宽度和旁向重叠率决定。有效视野已按目标完整入镜要求收缩。每条交线先生成密集几何样本用于覆盖验证；进入飞行路由前再压缩为有效直线段的首尾端点。
+规划器根据以下参数计算有效地面检测范围：
 
-### 3.2 扫描方向候选
+- 飞行高度；
+- 相机水平与垂直 FOV；
+- 目标尺寸；
+- 图像边缘余量；
+- forward overlap；
+- side overlap。
 
-扫描方向是地面平行扫描线的方向角，不是相机俯仰角。角度采用 ENU 坐标：
-`0°` 表示扫描线沿北向延伸，`90°` 表示沿东向延伸；相邻扫描线上的实际飞行
-航向相差 `180°`。当前相机俯仰角固定为 `-90°`，即始终垂直向下，偏航角随
-当前航段方向变化。因矩形正射 footprint 具有方向性，扫描方向也会旋转地面视野
-长边和短边，因此它同时影响扫描线数量、转弯次数、建筑切割后的碎片数和转场距离。
+系统使用的是满足“目标完整入镜”要求的有效 footprint，而不是直接使用完整物理 FOV。
 
-当前只比较南北 $0°$ 与东西 $90°$。基础评分包括候选点路径长度、跨航线连接、转弯数、航段数和航点数。若配置显式给出其中一个正交方向，则不执行方向搜索。
+有效 footprint 进一步决定：
 
-任意角度搜索不属于当前版本；如未来扩展，新增角度必须使用完整路线与连续覆盖结果评价。
+- 沿航线采样间距；
+- 相邻 Coverage Lanes 的横向间距。
 
-Web 中基础覆盖 lane 使用实线，lane 之间的 connector、避障和返航航段使用虚线；
-选择 BCD 时还会显示初始 cell 边界。交叉虚线表示组合优化后的转场，不表示相机需要
-重复扫描该区域。
+当前扫描方向定义在 ENU 平面中：
 
-## 4. Patch 覆盖与补漏
+```text
+0°  = North–South
+90° = East–West
+```
 
-有效区域被划分为 patch。对所有采样 footprint 求几何并集，然后计算每个 patch 的面积覆盖率。未达到阈值的 patch 会产生补漏候选。
+扫描方向与相机俯仰角是两个独立概念。
 
-当前补漏算法从未达标 patch 的残余几何生成安全观察候选，综合覆盖收益与路线插入代价选点，并在最终路线中重新执行连续覆盖验收。相邻补全点设有最小间距，满足 `99.99%` 后不再追逐浮点级微小残余。
+---
 
-连续遮挡复核后，只要任一可搜索 patch 未达到 `99.99%` 的数值覆盖阈值，系统就会
-继续补漏和障碍重路由，最多执行十轮。全局平均覆盖率不能抵消局部整块漏扫；仍有
-任一 patch 未达标时输出 `infeasible_coverage`，不会将其标记为可执行任务。
+## 4. Primary Coverage Generation
 
-推荐演进方案：
+Coverage Generation 负责回答：
 
-1. 对相邻未覆盖 patch 做连通分量聚类；
-2. 优先延伸已有航线；
-3. 无法延伸时为每个聚类生成短补漏 lane；
-4. 将补漏 lane 与主航线一起进行全局排序。
+> **需要生成哪些主扫描航线，才能构成完整的搜索骨架？**
 
-## 5. Coverage Generation 的统一 lane 输出
+当前实现包含两种并列方法：
 
-旧式方案把每个视野样本都当作必须访问的航点，导致同一条直线上反复进行障碍最短路。当前方案先把密集样本恢复为 coverage lane：
+```text
+                 Effective Search Area
+                         │
+             ┌───────────┴───────────┐
+             │                       │
+     Global Scanline                BCD
+             │                       │
+             └───────────┬───────────┘
+                         ↓
+                    CoveragePlan
+```
 
-- 按 `scan_line_index` 和 `scan_segment_index` 分组；
-- 使用建筑安全缓冲精确裁剪直线段；
-- 每个可行片段只保留首尾端点；
-- 独立补漏点作为单点任务保留。
+两种方法只负责生成 Coverage Geometry，不负责决定最终访问顺序。
 
-这使组合优化对象从“数百个视野样本”降为“数十条可定向航线”。
+---
 
-## 6. Route Optimization：lane 顺序与方向
+## 5. Global Scanline
 
-每条双端点航线都有正向和反向两种状态。当前算法先以障碍最短路代价生成 Greedy 初始解。路线任务不超过 12 个时，Auto 使用 Exact 动态规划联合求解顺序和方向；更大任务依次执行 2-opt 与单点 Or-opt 局部改进。
+Global Scanline 采用 **line-first** 策略：
 
-小规模 Exact 对当前离散路线问题给出精确解；大规模组合启发优先控制计算成本，不提供全局最优保证。所有候选路线仍须通过障碍连接与逐 patch 覆盖验收。
+```text
+Effective Search Area
+        ↓
+Global Parallel Scanline Lattice
+        ↓
+Geometry Intersection
+        ↓
+Coverage Segments
+```
 
-因此当前“优化”的准确含义是：在 `0°/90°` 两个扫描方向中选择，并对已生成的 lane
-进行障碍感知的排序和定向。更高级的局部搜索可作为未来资源受限场景下的降本增效
-研究方向，但不属于当前交付范围。
+首先在整个责任区建立统一的平行扫描线格架，再与搜索边界、孔洞和建筑占地区域求交。
 
-任何后优化都必须重新执行障碍连接与覆盖验证，不能只在欧氏距离矩阵上优化。
+例如：
 
-## 7. 可见图避障
+```text
+────────────────────────────
+──────────████──────────────
+──────────████──────────────
+────────────────────────────
+```
 
-对所有障碍安全缓冲多边形的外边界顶点建立可见图：若两顶点之间的线段不穿过障碍内部，就连接一条以欧氏长度为权重的边。查询时把起点和终点接入复用图，再求最短路径。
+建筑或孔洞会将一条全局扫描线裁剪成多个 Coverage Segments。
 
-复用静态顶点图避免为每一对航线端点重复构建完整图。输出路径为障碍角点折线，满足二维几何安全，但还存在两个工程问题：
+该方法的主要特点是：
 
-- 折点可能具有很大的航向突变；
-- 路径紧贴安全缓冲边界，对定位误差的鲁棒性取决于净空设置。
+- 结构简单；
+- 确定性强；
+- 扫描线具有统一 spacing 和 phase；
+- 易于复现和分析。
 
-后续可以在安全可行前提下进行 line-of-sight shortcut，并加入 Dubins 曲线、圆弧倒角或最小转弯半径约束。
+---
 
-## 8. 连续视频检测与墙体遮挡
+## 6. Boustrophedon Cellular Decomposition
 
-所有航段都计入连续视频检测。规划器沿 coverage lane、连接、避障和返航航段按 `analysis_rate_hz` 离散积分相机视锥扫过的地面；这只是计算精度参数，不代表相机定频拍照。优化 transition 的原因是减少航程和重复观察，而不是这些航段停止扫描。
+BCD 全称为 **Boustrophedon Cellular Decomposition**。
 
-每个样本先按目标尺寸和画面边缘余量收缩，再用相机、建筑顶面和建筑底面之间的投影构造保守墙体阴影，扣除建筑及其后方不可见地面。最终有效检测几何还会裁剪到该无人机责任区，因此绕行进入另一责任区不会产生跨区覆盖贡献。
+其核心思想是 **cell-first**：
 
-## 9. 飞控途径点生成
+```text
+Effective Search Area
+        ↓
+Topology Sweep
+        ↓
+Boustrophedon Cells
+        ↓
+Cell-wise Lawnmower Lanes
+        ↓
+CoveragePlan
+```
 
-几何规划只需要端点和转折点，但飞控通常需要更密集的参考轨迹。系统对每个直线航段独立均匀细分，确保相邻途径点不超过配置间距。
+BCD 沿给定 sweep direction 分析自由空间截面的连通关系。
 
-细分不会改变航线形状、航段类型或总长度。每个子航段继承原航段的：
+当自由空间发生：
 
-- `kind`；
-- `heading_deg`；
-- `speed_mps`；
-- `detection_enabled`；
-- 扫描线来源标识。
+```text
+1 → 2
+```
 
-## 10. 复杂度与可复现实验
+或：
 
-若障碍可见图有 $V$ 个顶点，朴素建图需要 $O(V^2)$ 次可见性判断。设 coverage lane 数为 $K$，贪心排序最多进行 $O(K^2)$ 次入口代价查询。Patch 覆盖评估的实际开销取决于 patch 数、footprint 数和 Shapely 几何求交。
+```text
+2 → 1
+```
 
-算法所有候选顺序和并列规则均确定，因此相同输入应得到相同输出。科研实验建议记录：Git commit、输入文件哈希、配置 YAML、运行时间、覆盖率、总航程、非作业航程、转弯数、不可达面积和规划器版本。
+等 split / merge 事件时建立新的 Cell。
 
-## 11. 当前研究缺口
+每个 Cell 内再生成往复式扫描航线：
 
-1. 贪心 lane 排序会出现局部折返；
-2. 补漏点尚未聚类成补漏航线；
-3. 没有最小转弯半径和动力学可行性约束；
-4. 扫描方向基础评分尚未使用完整飞行成本；
-5. 没有给出启发式解相对最优下界的 gap；
-6. 当前为矩形建筑的 2.5D 保守遮挡模型，尚未处理地形和任意三维网格；
-7. 暂不处理运动目标和双机时空碰撞。
+```text
+→→→→→→
+      ↓
+←←←←←←
+↓
+→→→→→→
+```
 
-这些缺口可以自然转化为课程设计、毕业设计或论文中的对照实验与算法改进项。
+因此两种方法的核心区别可以概括为：
+
+```text
+Global Scanline:
+Line First → Geometry Clipping
+
+BCD:
+Topology Decomposition → Cell-wise Lines
+```
+
+BCD 只决定覆盖区域如何分解，不决定 Cell 或 Lane 的最终访问顺序。
+
+---
+
+## 7. Coverage Lanes
+
+Coverage Generation 内部可以使用较密集的参考采样点描述相机覆盖：
+
+```text
+●──●──●──●──●──●
+```
+
+但 Route Optimization 不直接优化所有采样点。
+
+同一连续扫描段被抽象为一条可双向执行的 Coverage Lane：
+
+```text
+A ●────────────────● B
+
+Forward : A → B
+Reverse : B → A
+```
+
+因此需要区分：
+
+```text
+Coverage Reference Samples
+≠
+Route Optimization Nodes
+≠
+Flight-control Waypoints
+```
+
+该抽象将组合优化对象从大量采样点降低为有限数量的可定向 Coverage Lanes。
+
+---
+
+## 8. Route Optimization
+
+Coverage Generation 完成后得到 Lane 集合：
+
+$$
+\mathcal{L} = \{L_1,L_2,\ldots,L_K\}
+$$
+
+Route Optimization 不再决定“哪里需要搜索”，而只联合优化：
+
+1. **Lane Ordering**：各 Coverage Lane 的访问顺序；
+2. **Lane Orientation**：每条 Lane 从哪一端进入。
+
+当前主要优化目标为：
+
+$$
+J =
+D_{\mathrm{transition}}
++
+D_{\mathrm{return}}
+$$
+
+其中：
+
+- \(D_{\mathrm{transition}}\)：不同 Coverage Lanes 之间的转场距离；
+- \(D_{\mathrm{return}}\)：任务结束后的返航距离。
+
+Coverage 和安全约束均为硬约束。
+
+当前 `auto` 求解策略为：
+
+```text
+K ≤ 12
+    ↓
+Exact Dynamic Programming
+
+K > 12
+    ↓
+Greedy
+    ↓
+2-opt
+    ↓
+Or-opt
+```
+
+---
+
+## 9. Obstacle-aware Routing
+
+Lane 之间的转场不能简单使用欧氏距离。
+
+规划器根据建筑安全缓冲区建立 Visibility Graph，并计算障碍约束下的最短路径：
+
+$$
+c(i,j)=d_{\mathrm{VG}}(i,j)
+$$
+
+其中 \(d_{\mathrm{VG}}\) 为 Visibility Graph 中两点之间的最短可行距离。
+
+Route Optimization 完成以后，系统才构造完整任务中的：
+
+- `coverage_lane`；
+- `connector`；
+- `obstacle_avoidance`；
+- `return_home`。
+
+因此：
+
+```text
+Primary Coverage Generation
+        ↓
+Coverage Lanes
+        ↓
+Route Optimization
+        ↓
+Connector / Avoidance / Return
+```
+
+Connector 不参与初始 Coverage Generation，因为其具体位置只有在 Lane Ordering 和 Orientation 确定之后才能得到。
+
+---
+
+## 10. Continuous Mission Visibility
+
+最终任务是连续视频搜索任务，而不是离散拍照任务。
+
+因此最终 Coverage 由整条实际飞行轨迹共同产生：
+
+$$
+V_{\mathrm{mission}}
+=
+V_{\mathrm{coverage}}
+\cup
+V_{\mathrm{connector}}
+\cup
+V_{\mathrm{avoidance}}
+\cup
+V_{\mathrm{return}}
+$$
+
+也就是说：
+
+- Coverage Lane 产生主要搜索观测；
+- Connector 顺路产生额外观测；
+- 避障航段产生额外观测；
+- 返航航段同样产生额外观测。
+
+这些额外观测虽然不是为了 Coverage Generation 专门生成，但无人机实际经过时相机仍持续工作，因此计入最终 Mission Coverage。
+
+如果 Connector 等航段恰好补上了 Primary Coverage 中的局部缺口，则无需额外生成补漏点。
+
+---
+
+## 11. Building Occlusion
+
+理论 Camera Footprint 不等于实际可见地面。
+
+对于无人机位姿 \(p\)，首先计算理论地面 footprint：
+
+$$
+F(p)
+$$
+
+再计算建筑物产生的遮挡区域：
+
+$$
+O(p)
+$$
+
+实际有效可见地面为：
+
+$$
+V(p)=F(p)\setminus O(p)
+$$
+
+因此系统不仅删除建筑物本身的地面占地，还考虑建筑墙体对其后方地面的遮挡。
+
+示意如下：
+
+```text
+UAV
+  \
+   \ Camera View
+    \
+     █████ Building
+     █████╲
+___________╲XXXXXXXX
+             Occluded Ground
+```
+
+需要注意，遮挡区域依赖无人机当前观察位置，因此建筑后方不存在固定的永久不可见区域。
+
+---
+
+## 12. Patch-wise Coverage Validation
+
+为了避免全局平均覆盖率掩盖局部漏扫，有效搜索区域被划分为多个 Patch：
+
+$$
+\mathcal{P}=\{P_1,P_2,\ldots,P_N\}
+$$
+
+设最终任务所有有效可见区域的并集为 \(V\)，则 Patch \(P_i\) 的覆盖率定义为：
+
+$$
+r_i=
+\frac{
+\operatorname{Area}(P_i\cap V)
+}{
+\operatorname{Area}(P_i)
+}
+$$
+
+任务要求：
+
+$$
+r_i \ge \eta,
+\qquad
+\forall P_i\in\mathcal{P}
+$$
+
+当前覆盖阈值为：
+
+$$
+\eta=0.9999
+$$
+
+因此 Coverage Constraint 是：
+
+> **per-patch hard constraint**
+
+而不是全局平均覆盖率约束。
+
+某一个 Patch 未达到阈值，即使整体平均覆盖率很高，任务仍不能判定为完成。
+
+---
+
+## 13. Coverage Completion
+
+只有在完整 Mission Visibility Evaluation 后仍存在：
+
+$$
+r_i < \eta
+$$
+
+的 Patch 时，才触发 Coverage Completion。
+
+补漏流程为：
+
+```text
+Uncovered Patch
+        ↓
+Residual Uncovered Geometry
+        ↓
+Safe Observation Candidates
+        ↓
+Visibility Gain / Route Insertion Cost
+        ↓
+Completion Point
+        ↓
+Re-routing
+        ↓
+Continuous Visibility Re-evaluation
+```
+
+Completion 的目标不是补“缺失航点”，而是补：
+
+> **最终连续任务中实际仍未被有效观察的地面。**
+
+候选点综合考虑：
+
+- 新增可见面积；
+- 插入当前路线带来的额外飞行代价。
+
+因此系统倾向于选择能够以较小航程增量覆盖较大残余区域的位置。
+
+---
+
+## 14. Primary Coverage 与 Mission Coverage
+
+系统需要区分两个概念。
+
+### Primary Coverage
+
+由 Global Scanline 或 BCD 生成的主 Coverage Lanes 所形成的覆盖骨架。
+
+### Mission Coverage
+
+最终完整任务产生的实际连续覆盖：
+
+```text
+Primary Coverage
++
+Connector Coverage
++
+Obstacle-avoidance Coverage
++
+Return-home Coverage
++
+Completion Coverage
+```
+
+最终任务是否满足 Coverage Constraint，以 **Mission Coverage** 为准。
+
+因此整个系统的职责划分为：
+
+```text
+Coverage Generation
+=
+生成主要扫描任务
+
+Route Optimization
+=
+决定这些任务如何执行
+
+Mission Coverage Validation
+=
+判断完整真实任务是否真正完成搜索
+
+Coverage Completion
+=
+修复最终仍然存在的漏扫区域
+```
+
+---
+
+## 15. Final Mission Generation
+
+所有 Patch 通过覆盖验证后，最终几何路线被进一步离散为飞控参考点。
+
+相邻控制点满足：
+
+$$
+\|q_{i+1}-q_i\| \le d_{\mathrm{control}}
+$$
+
+该步骤只进行轨迹插值，不重新改变：
+
+- Coverage Geometry；
+- Lane Ordering；
+- Lane Orientation；
+- Route Topology。
+
+最终只有在所有可搜索 Patch 满足覆盖要求，并且完整路径满足飞行安全约束时：
+
+```text
+mission_status = ready
+```
+
+否则：
+
+```text
+mission_status = infeasible_coverage
+```
+
+---
+
+## 16. 核心设计原则
+
+当前算法遵循以下原则：
+
+1. **Coverage First**
+   Coverage 是硬约束，不能为了缩短路线而牺牲覆盖。
+
+2. **Safety First**
+   Coverage、Connector、Avoidance、Completion 和 Return 均必须满足飞行安全约束。
+
+3. **Separate Coverage from Routing**
+   Coverage Generation 决定“需要飞哪些主扫描航线”，Route Optimization 决定“如何组织这些航线”。
+
+4. **Evaluate the Actual Mission**
+   最终覆盖必须基于完整连续轨迹、相机模型和建筑遮挡进行验证，而不能仅依据理论扫描线判断。
+
+5. **Use Incidental Observations**
+   Connector、避障和返航航段产生的真实观测计入最终 Mission Coverage。
+
+6. **Repair Only Residual Coverage Defects**
+   Completion 只处理最终可见性验证后仍然存在的残余未覆盖区域。
+
+---
+
+## 17. 算法流程总结
+
+```text
+Semantic Map
+Search Area
+Camera / Flight Parameters
+        ↓
+Effective Search Area
+        ↓
+Camera-aware Footprint
+        ↓
+Global Scanline / BCD
+        ↓
+Primary Coverage Lanes
+        ↓
+Lane Ordering + Orientation
+        ↓
+Obstacle-aware Routing
+        ↓
+Coverage + Connector + Avoidance + Return
+        ↓
+Continuous Visibility Evaluation
+        ↓
+Building Occlusion
+        ↓
+Patch-wise Coverage Validation
+        ↓
+        Covered?
+       /       \
+     Yes        No
+      ↓          ↓
+ Final Plan   Completion
+                 ↓
+              Re-route
+                 ↓
+             Re-evaluate
+```
+
+整个系统的核心思想可概括为：
+
+> **先生成结构化的主 Coverage Backbone，再优化其执行顺序，随后基于完整连续任务计算真实可见覆盖，并只对最终残余漏扫区域进行补全。**

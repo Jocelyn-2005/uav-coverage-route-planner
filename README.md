@@ -157,7 +157,7 @@ results/example_run/visualization.png
 使用障碍感知 transition cost 连接相邻任务。连续视频视野复核通过后，路线才会细分
 成下层飞控途径点。
 
-当前 Route Optimization 决定 lane 的访问顺序和正反方向，以障碍感知的连接距离与返航距离为优化目标。覆盖率、安全净空和任务闭合属于硬约束。任务时间、重复覆盖、转弯和能耗等多目标联合优化保留为未来研究方向，不属于当前实现。
+当前 Route Optimization 决定 lane 的访问顺序和正反方向，以障碍感知的连接距离与返航距离为优化目标。覆盖率、安全净空和任务闭合属于硬约束。任务时间、重复覆盖、转弯和能耗等多目标联合优化不属于当前实现。
 
 - [问题定义与数学模型](docs/optimization-model.md)
 - [几何与优化算法设计](docs/algorithm-design.md)
