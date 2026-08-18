@@ -46,6 +46,8 @@ from coverage_planner.routing import (
 )
 from coverage_planner.visibility import visible_detection_ground
 
+_MINIMUM_COMPLETION_SEPARATION_M = 2.0
+
 
 @dataclass(frozen=True, slots=True)
 class StrategyMetrics:
@@ -195,7 +197,10 @@ class CoveragePlanner:
             while True:
                 uncovered_geometries = tuple(
                     geometry for patch in unresolved
-                    if not (geometry := patch.geometry.difference(covered_geometry)).is_empty)
+                    if (geometry := self._required_uncovered_geometry(
+                        patch, covered_geometry,
+                        minimum_coverage_ratio=minimum_coverage_ratio,
+                    )) is not None)
                 if not uncovered_geometries:
                     break
                 total_uncovered = unary_union(uncovered_geometries)
@@ -209,8 +214,12 @@ class CoveragePlanner:
                             flight_altitude_m=flight_altitude_m,
                             ground_elevation_m=ground_elevation_m):
                         position = (round(point.x, 6), round(point.y, 6))
-                        if (position in attempted_supplement_points
-                                or position in candidate_positions):
+                        known_positions = (
+                            attempted_supplement_points | candidate_positions)
+                        if (position in known_positions or any(
+                                hypot(position[0] - known[0], position[1] - known[1])
+                                < _MINIMUM_COMPLETION_SEPARATION_M
+                                for known in known_positions)):
                             continue
                         candidate_positions.add(position)
                         visibility = completion_visibility_cache.get(position)
@@ -568,6 +577,19 @@ class CoveragePlanner:
         return tuple(output)
 
     @staticmethod
+    def _required_uncovered_geometry(
+        patch: Patch,
+        covered_geometry: BaseGeometry,
+        *,
+        minimum_coverage_ratio: float,
+    ) -> BaseGeometry | None:
+        covered_area = patch.geometry.intersection(covered_geometry).area
+        if covered_area / patch.area_m2 >= minimum_coverage_ratio:
+            return None
+        uncovered = patch.geometry.difference(covered_geometry)
+        return None if uncovered.is_empty else uncovered
+
+    @staticmethod
     def _coverage_completion_candidates(
         uncovered_geometry: BaseGeometry,
         *,
@@ -690,6 +712,13 @@ class CoveragePlanner:
         CapturePlan, tuple[Waypoint, ...], tuple[str, ...], OptimizedRoute,
         tuple[OptimizedRoute, ...], ContinuousFlightPlan, dict[str, Polygonal], tuple[Patch, ...],
     ]:
+        original_state = (
+            capture_plan, planning_route, continuous_flight,
+            continuous_footprints, evaluated)
+        completion_sample_id_by_position = {
+            (waypoint.x, waypoint.y): f"segment_point_{index + 1:04d}_image_0000"
+            for index, waypoint in enumerate(planning_route)
+            if waypoint.is_completion}
         completion_ids = [
             waypoint.id for waypoint in capture_plan.capture_waypoints
             if waypoint.is_completion]
@@ -717,78 +746,68 @@ class CoveragePlanner:
             if unique_visibility.area > 1e-6:
                 continue
             retained_completion_ids.remove(identifier)
-        if len(retained_completion_ids) != len(completion_ids):
-            original_state = (
-                capture_plan, planning_route, skipped_point_ids, route_solution,
-                route_candidates, continuous_flight, continuous_footprints, evaluated)
-            retained = set(retained_completion_ids)
-            capture_plan = replace(
-                capture_plan,
-                capture_waypoints=tuple(
-                    waypoint for waypoint in capture_plan.capture_waypoints
-                    if not waypoint.is_completion or waypoint.id in retained),
-            )
-            route_points, candidate_skipped, route_solution, route_candidates = (
-                self._optimize_coverage_route(
-                    capture_plan, start_enu_m=(start[0], start[1]),
-                    obstacles=obstacle_geometry, method="greedy"))
-            planning_route, route_skipped = route_reachable_waypoints(
-                Waypoint("wp_start", 0, "transit", *start, 0, -90, False),
-                route_points, obstacle_geometry, return_to_start=return_to_start)
-            skipped_point_ids = tuple(dict.fromkeys(
-                (*skipped_point_ids, *candidate_skipped, *route_skipped)))
-            continuous_flight, continuous_footprints = build_continuous_flight_plan(
-                planning_route, camera=camera, flight_altitude_m=flight_altitude_m,
-                ground_elevation_m=ground_elevation_m,
-                video_analysis_rate_hz=video_analysis_rate_hz,
-                control_point_spacing_m=control_point_spacing_m,
-                coverage_speed_mps=coverage_speed_mps,
-                connector_speed_mps=connector_speed_mps,
-                obstacle_speed_mps=obstacle_speed_mps,
-                return_speed_mps=return_speed_mps, capture_region=effective_geometry,
-                semantic_map=semantic_map)
-            evaluated = evaluate_patch_coverage(
-                patches, continuous_footprints,
-                minimum_coverage_ratio=minimum_coverage_ratio)
-            if any(not patch.covered for patch in evaluated):
-                (capture_plan, planning_route, skipped_point_ids, route_solution,
-                 route_candidates, continuous_flight, continuous_footprints,
-                 evaluated) = original_state
-                retained_completion_ids = completion_ids
-        completion_ids = retained_completion_ids
-        if len(completion_ids) > 12:
-            return (
-                capture_plan, planning_route, skipped_point_ids, route_solution,
-                route_candidates, continuous_flight, continuous_footprints, evaluated)
-        for identifier in completion_ids:
-            candidate_plan = replace(
-                capture_plan,
-                capture_waypoints=tuple(
-                    waypoint for waypoint in capture_plan.capture_waypoints
-                    if waypoint.id != identifier))
-            route_points, candidate_skipped, candidate_solution, candidate_routes = (
-                self._optimize_coverage_route(
-                    candidate_plan, start_enu_m=(start[0], start[1]),
-                    obstacles=obstacle_geometry, method=route_optimization_method))
-            candidate_route, route_skipped = route_reachable_waypoints(
-                Waypoint("wp_start", 0, "transit", *start, 0, -90, False),
-                route_points, obstacle_geometry, return_to_start=return_to_start)
-            candidate_flight, candidate_footprints = build_continuous_flight_plan(
-                candidate_route, camera=camera, flight_altitude_m=flight_altitude_m,
-                ground_elevation_m=ground_elevation_m,
-                video_analysis_rate_hz=video_analysis_rate_hz,
-                control_point_spacing_m=control_point_spacing_m,
-                coverage_speed_mps=coverage_speed_mps,
-                connector_speed_mps=connector_speed_mps,
-                obstacle_speed_mps=obstacle_speed_mps,
-                return_speed_mps=return_speed_mps, capture_region=effective_geometry,
-                semantic_map=semantic_map)
-            candidate_evaluated = evaluate_patch_coverage(
-                patches, candidate_footprints,
-                minimum_coverage_ratio=minimum_coverage_ratio)
-            if any(not patch.covered for patch in candidate_evaluated):
-                continue
-            capture_plan = candidate_plan
+        retained = set(retained_completion_ids)
+        capture_plan = replace(
+            capture_plan,
+            capture_waypoints=tuple(
+                waypoint for waypoint in capture_plan.capture_waypoints
+                if not waypoint.is_completion or waypoint.id in retained),
+        )
+        retained_positions = {
+            (waypoint.x, waypoint.y) for waypoint in capture_plan.capture_waypoints
+            if waypoint.is_completion}
+        continuous_footprints = {
+            sample_id: footprint
+            for sample_id, footprint in continuous_footprints.items()
+            if sample_id not in {
+                completion_sample_id_by_position[position]
+                for position in completion_sample_id_by_position
+                if position not in retained_positions}
+        }
+        planning_route = tuple(
+            waypoint for waypoint in planning_route
+            if not waypoint.is_completion or (waypoint.x, waypoint.y) in retained_positions)
+        candidate_flight, candidate_footprints = build_continuous_flight_plan(
+            planning_route, camera=camera, flight_altitude_m=flight_altitude_m,
+            ground_elevation_m=ground_elevation_m,
+            video_analysis_rate_hz=video_analysis_rate_hz,
+            control_point_spacing_m=control_point_spacing_m,
+            coverage_speed_mps=coverage_speed_mps,
+            connector_speed_mps=connector_speed_mps,
+            obstacle_speed_mps=obstacle_speed_mps,
+            return_speed_mps=return_speed_mps, capture_region=effective_geometry,
+            semantic_map=semantic_map)
+        candidate_evaluated = evaluate_patch_coverage(
+            patches, candidate_footprints,
+            minimum_coverage_ratio=minimum_coverage_ratio)
+        if all(patch.covered for patch in candidate_evaluated):
+            continuous_flight = candidate_flight
+            continuous_footprints = candidate_footprints
+            evaluated = candidate_evaluated
+        else:
+            (capture_plan, planning_route, continuous_flight,
+             continuous_footprints, evaluated) = original_state
+        route_points, candidate_skipped, candidate_solution, candidate_routes = (
+            self._optimize_coverage_route(
+                capture_plan, start_enu_m=(start[0], start[1]),
+                obstacles=obstacle_geometry, method=route_optimization_method))
+        candidate_route, route_skipped = route_reachable_waypoints(
+            Waypoint("wp_start", 0, "transit", *start, 0, -90, False),
+            route_points, obstacle_geometry, return_to_start=return_to_start)
+        candidate_flight, candidate_footprints = build_continuous_flight_plan(
+            candidate_route, camera=camera, flight_altitude_m=flight_altitude_m,
+            ground_elevation_m=ground_elevation_m,
+            video_analysis_rate_hz=video_analysis_rate_hz,
+            control_point_spacing_m=control_point_spacing_m,
+            coverage_speed_mps=coverage_speed_mps,
+            connector_speed_mps=connector_speed_mps,
+            obstacle_speed_mps=obstacle_speed_mps,
+            return_speed_mps=return_speed_mps, capture_region=effective_geometry,
+            semantic_map=semantic_map)
+        candidate_evaluated = evaluate_patch_coverage(
+            patches, candidate_footprints,
+            minimum_coverage_ratio=minimum_coverage_ratio)
+        if all(patch.covered for patch in candidate_evaluated):
             planning_route = candidate_route
             skipped_point_ids = tuple(dict.fromkeys(
                 (*skipped_point_ids, *candidate_skipped, *route_skipped)))
@@ -797,6 +816,10 @@ class CoveragePlanner:
             continuous_flight = candidate_flight
             continuous_footprints = candidate_footprints
             evaluated = candidate_evaluated
+        elif route_optimization_method == "auto":
+            route_solution = replace(
+                route_solution, method="auto:coverage_feasible_greedy")
+            route_candidates = candidate_routes
         return (
             capture_plan, planning_route, skipped_point_ids, route_solution,
             route_candidates, continuous_flight, continuous_footprints, evaluated)

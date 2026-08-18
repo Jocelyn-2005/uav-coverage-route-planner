@@ -4,7 +4,8 @@ from pathlib import Path
 from shapely import unary_union
 from shapely.geometry import LineString, Point, Polygon, box
 
-from coverage_planner.models import CameraConfig, SemanticMap, Waypoint
+from coverage_planner.coverage.scanlines import CoveragePlan
+from coverage_planner.models import CameraConfig, Patch, SemanticMap, Waypoint
 from coverage_planner.planner import CoveragePlanner
 from coverage_planner.reporting import export_plan
 from coverage_planner.visibility import visible_detection_ground
@@ -193,3 +194,38 @@ def test_completion_insertion_cost_prefers_candidate_near_existing_route() -> No
     near = CoveragePlanner._minimum_insertion_cost(route, Point(1, 5))
     far = CoveragePlanner._minimum_insertion_cost(route, Point(20, 5))
     assert near < far
+
+
+def test_completion_ignores_residual_inside_patch_tolerance() -> None:
+    geometry = box(0, 0, 100, 100)
+    patch = Patch("patch", 0, 0, (50, 50), geometry, geometry.area)
+    allowed_residual = box(99.995, 0, 100, 100)
+    covered = geometry.difference(allowed_residual)
+    assert CoveragePlanner._required_uncovered_geometry(
+        patch, covered, minimum_coverage_ratio=.9999) is None
+
+    excessive_residual = box(99.98, 0, 100, 100)
+    covered = geometry.difference(excessive_residual)
+    assert CoveragePlanner._required_uncovered_geometry(
+        patch, covered, minimum_coverage_ratio=.9999) is not None
+
+
+def test_many_completion_points_still_receive_final_auto_optimization() -> None:
+    map_geometry = box(0, 0, 140, 20)
+    many_points = tuple(
+        Waypoint(
+            f"completion_{index:02d}", index, "capture", index * 10, 10, 10,
+            90, -90, True, is_completion=True,
+        )
+        for index in range(1, 14)
+    )
+    _route, _skipped, solution, candidates = CoveragePlanner._optimize_coverage_route(
+        CoveragePlan(90, (), many_points), start_enu_m=(0, 10),
+        obstacles=Polygon(), method="auto",
+    )
+    assert solution.method == "auto:heuristic"
+    assert {candidate.method for candidate in candidates} >= {
+        "greedy_obstacle_distance", "two_opt", "or_opt",
+    }
+    assert map_geometry.covers(LineString(
+        (waypoint.x, waypoint.y) for waypoint in solution.ordered_waypoints))
