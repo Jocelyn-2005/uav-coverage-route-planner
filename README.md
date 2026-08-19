@@ -1,4 +1,3 @@
-````md
 # UAV Coverage Generation and Route Optimization Planner
 
 面向无人机园区连续视频检测任务的 **Coverage Generation + Route Optimization** 规划器。给定搜索责任区、2.5D 建筑地图、相机与飞行参数以及起降点，系统生成全覆盖航道，优化航道访问顺序与方向，展开绕障安全路线，并通过连续视野复核与自动补漏生成最终可执行飞行计划。
@@ -465,5 +464,4 @@ Coverage Completion if Necessary
 * [`docs/semantic-map-schema.md`](docs/semantic-map-schema.md) — 语义地图格式
 * [`docs/future-design.md`](docs/future-design.md) — 后续设计边界
 
-```
 ```
